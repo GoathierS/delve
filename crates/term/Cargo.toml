@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "delve-term"
@@ -13,3 +15,7 @@ path = "src/main.rs"
 [dependencies]
 delve-core = { path = "../core" }
 ratatui = "0.30"
+
+# Releases ship the graphical game; this one is built from source.
+[package.metadata.dist]
+dist = false

@@ -5,6 +5,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[package.metadata.wix]
+upgrade-guid = "6BC1BCB7-7B8A-4C7C-A3FF-B5B7234D02CC"
+path-guid = "96793419-1D2D-4222-A63D-03EFA01A1996"
+license = false
+eula = false
 
 [dependencies]
 delve-core = { path = "../core" }
