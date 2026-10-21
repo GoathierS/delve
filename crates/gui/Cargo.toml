@@ -1,0 +1,11 @@
+[package]
+name = "delve"
+description = "delve, a small roguelike"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+delve-core = { path = "../core" }
+macroquad = { version = "0.4", default-features = false }

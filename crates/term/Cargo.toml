@@ -1,0 +1,15 @@
+[package]
+name = "delve-term"
+description = "delve in the terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "delve-term"
+path = "src/main.rs"
+
+[dependencies]
+delve-core = { path = "../core" }
+ratatui = "0.30"
