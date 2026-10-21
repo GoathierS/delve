@@ -86,7 +86,19 @@
         <Property Id='DiskPrompt' Value='delve Installation'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
-            <Directory Id='ProgramMenuFolder'/>
+            <!-- delve in the Start menu. -->
+            <Directory Id='ProgramMenuFolder'>
+                <Component Id='StartMenuShortcut' Guid='BB276504-9E54-44C6-848C-8B28B708F92A'>
+                    <Shortcut
+                        Id='StartMenuLink'
+                        Name='delve'
+                        Description='A small roguelike about light, gold, and knowing when to leave'
+                        Target='[#exe0]'
+                        WorkingDirectory='Bin'
+                        Icon='ProductICO'/>
+                    <RegistryValue Root='HKCU' Key='Software\GoathierS\delve' Name='StartMenuShortcut' Type='integer' Value='1' KeyPath='yes'/>
+                </Component>
+            </Directory>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='delve'>
                     
@@ -127,18 +139,7 @@
                                 Name='delve.exe'
                                 DiskId='1'
                                 Source='$(var.CargoTargetBinDir)\delve.exe'
-                                KeyPath='yes'>
-                                <!-- delve in the Start menu. -->
-                                <Shortcut
-                                    Id='StartMenuShortcut'
-                                    Directory='ProgramMenuFolder'
-                                    Name='delve'
-                                    Description='A small roguelike about light, gold, and knowing when to leave'
-                                    WorkingDirectory='Bin'
-                                    Icon='ProductICO'
-                                    IconIndex='0'
-                                    Advertise='yes'/>
-                            </File>
+                                KeyPath='yes'/>
                         </Component>
                     </Directory>
                 </Directory>
@@ -162,6 +163,7 @@
             <!--<ComponentRef Id='License'/>-->
 
             <ComponentRef Id='binary0'/>
+            <ComponentRef Id='StartMenuShortcut'/>
 
             <Feature
                 Id='Environment'
