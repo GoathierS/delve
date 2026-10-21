@@ -7,7 +7,14 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["Gauthier Souquet"]
+repository = "https://github.com/GoathierS/delve"
+homepage = "https://github.com/GoathierS/delve"
 
 [profile.release]
 lto = "thin"
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

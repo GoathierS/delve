@@ -46,17 +46,24 @@ lost if you die down there.
 
 ## Download
 
-Ready-to-play builds for Linux, Windows and macOS (Apple Silicon) are on the
-[releases page](https://github.com/GoathierS/delve/releases/latest).
+**Linux and macOS**, in a terminal:
 
-- **Linux**: extract the archive and run `./install.sh` to add delve to your
-  applications menu, or just run `./delve`.
-- **Windows**: extract the zip and run `delve.exe`. Windows may warn that the app
-  is unrecognized: choose *More info*, then *Run anyway*.
-- **macOS**: extract the archive. The app is not signed, so the first time run
-  `xattr -d com.apple.quarantine delve delve-term` in its folder, then `./delve`.
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/GoathierS/delve/releases/latest/download/delve-installer.sh | sh
+```
 
-`delve-term` is the same game in a terminal.
+**Windows**: download and run
+[`delve-x86_64-pc-windows-msvc.msi`](https://github.com/GoathierS/delve/releases/latest/download/delve-x86_64-pc-windows-msvc.msi),
+which adds delve to the Start menu. Windows may warn that the app is unrecognized:
+choose *More info*, then *Run anyway*. Or, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/GoathierS/delve/releases/latest/download/delve-installer.ps1 | iex"
+```
+
+Archives for every system are on the
+[releases page](https://github.com/GoathierS/delve/releases/latest). On Linux the game
+adds itself to your applications menu the first time it runs.
 
 ## Build from source
 

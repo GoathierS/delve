@@ -1,0 +1,50 @@
+# Sends each release to itch.io with butler, called by release.yml once the release is
+# built. It does nothing until the repository has:
+#   - a variable ITCH_GAME, the page as user/game (e.g. goathiers/delve);
+#   - a secret BUTLER_API_KEY, from https://itch.io/user/settings/api-keys.
+name: Publish to itch.io
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  itch:
+    if: ${{ vars.ITCH_GAME != '' }}
+    runs-on: ubuntu-latest
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+      ITCH_GAME: ${{ vars.ITCH_GAME }}
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+      - name: Install butler
+        run: |
+          curl -fsSL -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip -q butler.zip -d butler
+          chmod +x butler/butler
+          butler/butler -V
+      - name: Push each system to its channel
+        run: |
+          version="$(echo "$PLAN" | jq -r '.announcement_tag' | sed 's/^v//')"
+          push() {
+            archive="artifacts/$1"
+            dir="itch/$2"
+            mkdir -p "$dir"
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$dir" ;;
+              *) tar xf "$archive" -C "$dir" ;;
+            esac
+            butler/butler push "$dir" "$ITCH_GAME:$2" --userversion "$version"
+          }
+          push delve-x86_64-unknown-linux-gnu.tar.xz linux
+          push delve-x86_64-pc-windows-msvc.zip windows
+          push delve-aarch64-apple-darwin.tar.xz mac-arm64
+          push delve-x86_64-apple-darwin.tar.xz mac-intel

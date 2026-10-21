@@ -2,6 +2,8 @@
 // No console window behind the game on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod desktop;
 mod fx;
 mod menu;
 mod render;
@@ -514,6 +516,8 @@ async fn main() {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    desktop::register();
     let mut delve = Delve::new(Storage::default_location(), sheet);
     loop {
         if is_quit_requested() {
