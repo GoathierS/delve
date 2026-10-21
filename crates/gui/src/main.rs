@@ -17,7 +17,7 @@ use delve_core::game::{Ability, Action, Game, State, Tone};
 use delve_core::gear::Profile;
 use delve_core::map::Pos;
 use delve_core::save::{Score, Storage};
-use macroquad::miniquad::conf::{Icon, Platform};
+use macroquad::miniquad::conf::{Icon, LinuxBackend, Platform};
 use macroquad::prelude::*;
 
 use fx::{Fx, tile_center};
@@ -27,6 +27,9 @@ use render::{Ending, View};
 /// Held keys repeat after this delay, then at this interval.
 const REPEAT_DELAY: f64 = 0.22;
 const REPEAT_EVERY: f64 = 0.075;
+/// Frames never come faster than this, should VSync not hold them back (some drivers
+/// ignore it, e.g. for a hidden window): no point in burning the battery.
+const MIN_FRAME: std::time::Duration = std::time::Duration::from_micros(1_000_000 / 144);
 /// Pause between steps when walking to a clicked cell.
 const TRAVEL_STEP: f32 = 0.07;
 
@@ -47,11 +50,25 @@ fn window_conf() -> Conf {
         icon: Some(icon()),
         // Lets the desktop match the window with delve.desktop, and show its icon.
         platform: Platform {
+            linux_backend: linux_backend(),
             linux_wm_class: "delve",
             swap_interval: Some(if vsync { 1 } else { 0 }),
             ..Default::default()
         },
         ..Default::default()
+    }
+}
+
+/// Wayland when the desktop runs it, X11 otherwise. Under X11 through XWayland the game is
+/// drawn at half the screen's resolution and enlarged, and some systems fall back to
+/// drawing it without the graphics card (Mesa's llvmpipe), slowly. `DELVE_X11=1` forces
+/// X11 all the same; screenshots use it, as reading the picture back fails on Wayland.
+fn linux_backend() -> LinuxBackend {
+    let screenshot = std::env::var_os("DELVE_SCREENSHOT").is_some() && std::env::var_os("DELVE_BENCH").is_none();
+    if screenshot || std::env::var_os("DELVE_X11").is_some() {
+        LinuxBackend::X11Only
+    } else {
+        LinuxBackend::WaylandWithX11Fallback
     }
 }
 
@@ -551,17 +568,32 @@ async fn main() {
         let bench: Option<u32> = std::env::var("DELVE_BENCH").ok().and_then(|n| n.parse().ok());
         let mut frame = 0;
         let mut work = vec![];
+        let mut intervals = vec![];
         loop {
             frame += 1;
             let start = std::time::Instant::now();
             delve.frame();
             work.push(start.elapsed().as_secs_f64() * 1000.0);
+            intervals.push(get_frame_time() as f64 * 1000.0);
             if let Some(frames) = bench {
                 if frame == frames {
                     work.sort_by(f64::total_cmp);
                     let mean = work.iter().sum::<f64>() / work.len() as f64;
                     let p99 = work[work.len() * 99 / 100];
                     println!("{frames} frames · game {mean:.2} ms on average · 99% under {p99:.2} ms");
+                    // The first frames include loading; the rest show the real pace.
+                    let pace = &intervals[intervals.len() / 4..];
+                    let pace = pace.iter().sum::<f64>() / pace.len() as f64;
+                    println!("one frame every {pace:.1} ms · {:.0} fps", 1000.0 / pace);
+                    println!("drawn by {}", ui::renderer());
+                    println!(
+                        "window {}x{} · dpi {} · {} real pixels · interface scale {:.2}",
+                        screen_width(),
+                        screen_height(),
+                        screen_dpi_scale(),
+                        ui::pixels(),
+                        ui::scale()
+                    );
                     return;
                 }
                 next_frame().await;
@@ -585,6 +617,8 @@ async fn main() {
     let mut delve = Delve::new(Storage::default_location(), sheet);
     // Smoothed frame time and time spent by the game, for the frame rate counter.
     let (mut frame_ms, mut work_ms) = (16.7f32, 0.0f32);
+    let mut renderer = String::new();
+    let mut last_frame = std::time::Instant::now();
     loop {
         if is_quit_requested() {
             delve.quit();
@@ -599,8 +633,15 @@ async fn main() {
         work_ms += (start.elapsed().as_secs_f32() * 1000.0 - work_ms) * k;
         frame_ms += (get_frame_time() * 1000.0 - frame_ms) * k;
         if delve.profile.show_fps {
-            ui::fps_overlay(1000.0 / frame_ms.max(0.1), frame_ms, work_ms);
+            if renderer.is_empty() {
+                renderer = ui::renderer();
+            }
+            ui::fps_overlay(1000.0 / frame_ms.max(0.1), frame_ms, work_ms, &renderer);
         }
+        if let Some(rest) = MIN_FRAME.checked_sub(last_frame.elapsed()) {
+            std::thread::sleep(rest);
+        }
+        last_frame = std::time::Instant::now();
         next_frame().await;
     }
 }

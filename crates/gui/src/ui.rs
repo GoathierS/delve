@@ -84,11 +84,11 @@ pub fn set_shake(on: bool) {
 
 /// Frames per second and the time each frame takes, in a corner: `work` is the time the
 /// game itself spends on a frame, the rest is waiting for the display.
-pub fn fps_overlay(fps: f32, frame_ms: f32, work_ms: f32) {
+pub fn fps_overlay(fps: f32, frame_ms: f32, work_ms: f32, renderer: &str) {
     set_camera(&ui_camera());
-    let text = format!("{fps:.0} fps · {frame_ms:.1} ms · game {work_ms:.1} ms");
-    let w = measure(&text, 16.0, Face::Bold) + 20.0;
-    let r = Rect::new(size().x - w - 8.0, size().y - 34.0, w, 26.0);
+    let line = format!("{fps:.0} fps · {frame_ms:.1} ms · game {work_ms:.1} ms");
+    let w = measure(&line, 16.0, Face::Bold).max(measure(renderer, 14.0, Face::Regular)) + 20.0;
+    let r = Rect::new(size().x - w - 8.0, size().y - 52.0, w, 44.0);
     draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.0, 0.0, 0.0, 0.7));
     let color = if fps >= 55.0 {
         GOOD
@@ -97,8 +97,26 @@ pub fn fps_overlay(fps: f32, frame_ms: f32, work_ms: f32) {
     } else {
         BAD
     };
-    text_in(&text, r.x + 10.0, r.y + 19.0, 16.0, Face::Bold, color);
+    text_in(&line, r.x + 10.0, r.y + 19.0, 16.0, Face::Bold, color);
+    text(renderer, r.x + 10.0, r.y + 37.0, 14.0, DIM);
     set_default_camera();
+}
+
+/// The OpenGL driver drawing the game, e.g. to spot a software fallback (llvmpipe).
+/// Only meaningful once a first frame has been shown.
+pub fn renderer() -> String {
+    use macroquad::miniquad::gl;
+    const GL_RENDERER: u32 = 0x1F01;
+    let read = |name| {
+        // SAFETY: called on the thread that owns the GL context, which macroquad set up.
+        let s = unsafe { gl::glGetString(name) };
+        if s.is_null() {
+            return String::from("?");
+        }
+        // SAFETY: OpenGL returns a static, NUL-terminated string.
+        unsafe { std::ffi::CStr::from_ptr(s as *const std::ffi::c_char) }.to_string_lossy().into_owned()
+    };
+    format!("{} · {}", read(GL_RENDERER), read(gl::GL_VERSION))
 }
 
 // macroquad scales its drawing space by the display's DPI factor (read from Xft.dpi).
