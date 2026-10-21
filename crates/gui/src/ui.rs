@@ -43,6 +43,7 @@ static FONTS: OnceLock<Fonts> = OnceLock::new();
 thread_local! {
     /// The player's own enlargement, on top of the fit to the window.
     static USER_SCALE: Cell<f32> = const { Cell::new(1.0) };
+    static SHAKE: Cell<bool> = const { Cell::new(true) };
 }
 
 pub fn load_fonts() {
@@ -70,6 +71,34 @@ pub fn user_scale() -> f32 {
 
 pub fn set_user_scale(s: f32) {
     USER_SCALE.set(s.clamp(MIN_USER_SCALE, MAX_USER_SCALE));
+}
+
+/// Whether the screen may shake.
+pub fn shake() -> bool {
+    SHAKE.get()
+}
+
+pub fn set_shake(on: bool) {
+    SHAKE.set(on);
+}
+
+/// Frames per second and the time each frame takes, in a corner: `work` is the time the
+/// game itself spends on a frame, the rest is waiting for the display.
+pub fn fps_overlay(fps: f32, frame_ms: f32, work_ms: f32) {
+    set_camera(&ui_camera());
+    let text = format!("{fps:.0} fps · {frame_ms:.1} ms · game {work_ms:.1} ms");
+    let w = measure(&text, 16.0, Face::Bold) + 20.0;
+    let r = Rect::new(size().x - w - 8.0, size().y - 34.0, w, 26.0);
+    draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.0, 0.0, 0.0, 0.7));
+    let color = if fps >= 55.0 {
+        GOOD
+    } else if fps >= 30.0 {
+        GOLDEN
+    } else {
+        BAD
+    };
+    text_in(&text, r.x + 10.0, r.y + 19.0, 16.0, Face::Bold, color);
+    set_default_camera();
 }
 
 // macroquad scales its drawing space by the display's DPI factor (read from Xft.dpi).

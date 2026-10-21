@@ -15,8 +15,19 @@ pub enum Page {
     Title,
     Armory,
     Scores,
+    Options,
     /// The title alone, for the cover picture of the game's page.
     Cover,
+}
+
+/// A setting changed on the options page.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Setting {
+    /// Interface size, by this much.
+    Scale(f32),
+    Fps,
+    Shake,
+    VSync,
 }
 
 /// What the player asked for on a menu.
@@ -27,6 +38,7 @@ pub enum Command {
     Go(Page),
     /// Buy this piece in the armory.
     Buy(&'static Gear),
+    Set(Setting),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -35,6 +47,7 @@ enum Entry {
     NewRun,
     Armory,
     Scores,
+    Options,
     Quit,
 }
 
@@ -45,6 +58,7 @@ impl Entry {
             Entry::NewRun => "New run",
             Entry::Armory => "Armory",
             Entry::Scores => "Best runs",
+            Entry::Options => "Options",
             Entry::Quit => "Quit",
         }
     }
@@ -82,6 +96,8 @@ pub struct Menu {
     selected: usize,
     /// Row (slot) and column (piece) chosen in the armory.
     armory: (usize, usize),
+    /// Row chosen on the options page.
+    option: usize,
     /// A line shown for a moment, e.g. after a purchase, and when it appeared.
     notice: Option<(String, Color, f64)>,
     /// The last mouse position, to tell hovering from a still pointer.
@@ -96,6 +112,7 @@ impl Menu {
             clock: 0.0,
             selected: 0,
             armory: (0, 0),
+            option: 0,
             notice: None,
             last_mouse: Vec2::ZERO,
         }
@@ -118,6 +135,7 @@ impl Menu {
             Page::Title => self.title(sheet, profile, has_save, &nav, moved),
             Page::Armory => self.armory(sheet, profile, &nav, moved),
             Page::Scores => self.scores(scores, &nav),
+            Page::Options => self.options(profile, &nav, moved),
             Page::Cover => {
                 self.cover(sheet);
                 None
@@ -169,10 +187,11 @@ impl Menu {
         nav: &Nav,
         moved: bool,
     ) -> Option<Command> {
-        let entries: Vec<Entry> = [Entry::Continue, Entry::NewRun, Entry::Armory, Entry::Scores, Entry::Quit]
-            .into_iter()
-            .filter(|&e| e != Entry::Continue || has_save)
-            .collect();
+        let entries: Vec<Entry> =
+            [Entry::Continue, Entry::NewRun, Entry::Armory, Entry::Scores, Entry::Options, Entry::Quit]
+                .into_iter()
+                .filter(|&e| e != Entry::Continue || has_save)
+                .collect();
         let n = entries.len();
         self.selected = self.selected.min(n - 1);
         if nav.up {
@@ -230,6 +249,7 @@ impl Menu {
             Entry::NewRun => Command::NewRun,
             Entry::Armory => Command::Go(Page::Armory),
             Entry::Scores => Command::Go(Page::Scores),
+            Entry::Options => Command::Go(Page::Options),
             Entry::Quit => Command::Quit,
         })
     }
@@ -354,6 +374,60 @@ impl Menu {
             return Some(Command::Go(Page::Title));
         }
         clicked.or(nav.ok.then_some(chosen)).map(Command::Buy)
+    }
+
+    fn options(&mut self, profile: &Profile, nav: &Nav, moved: bool) -> Option<Command> {
+        let on = |b: bool| if b { "On" } else { "Off" }.to_string();
+        let rows = [
+            ("Interface size", format!("{:.0}%", ui::user_scale() * 100.0), "← → or + −"),
+            ("Show FPS", on(profile.show_fps), "F3 anywhere"),
+            ("Screen shake", on(profile.screen_shake), "when the hero is hit"),
+            ("VSync", on(profile.vsync), "applies at the next start"),
+            ("Back", String::new(), ""),
+        ];
+        let n = rows.len();
+        if nav.up {
+            self.option = (self.option + n - 1) % n;
+        }
+        if nav.down {
+            self.option = (self.option + 1) % n;
+        }
+        let size = ui::size();
+        let (w, h, gap) = (620.0, 62.0, 12.0);
+        let x = (size.x - w) / 2.0;
+        let top = (size.y - n as f32 * (h + gap)) / 2.0 + 30.0;
+        ui::centered("Options", size.x / 2.0, top - 40.0, 56.0, Face::Title, GOLDEN);
+        let mut clicked = None;
+        for (i, (label, value, hint)) in rows.iter().enumerate() {
+            let r = Rect::new(x, top + i as f32 * (h + gap), w, h);
+            let hovered = r.contains(ui::mouse());
+            if hovered && moved {
+                self.option = i;
+            }
+            if hovered && is_mouse_button_pressed(MouseButton::Left) {
+                self.option = i;
+                clicked = Some(i);
+            }
+            let selected = self.option == i;
+            ui::card(r, selected);
+            let color = if selected { GOLDEN } else { TEXT };
+            ui::text_in(label, r.x + 24.0, r.y + 30.0, 23.0, Face::Bold, color);
+            ui::text(hint, r.x + 24.0, r.y + 51.0, 14.0, DIM);
+            let vw = ui::measure(value, 23.0, Face::Bold);
+            ui::text_in(value, r.x + r.w - vw - 24.0, r.y + 39.0, 23.0, Face::Bold, color);
+        }
+        ui::centered("Esc  back", size.x / 2.0, size.y - 30.0, 19.0, Face::Bold, DIM);
+        if nav.back {
+            return Some(Command::Go(Page::Title));
+        }
+        let chosen = clicked.or((nav.ok || nav.left || nav.right).then_some(self.option))?;
+        Some(match chosen {
+            0 => Command::Set(Setting::Scale(if nav.left { -0.1 } else { 0.1 })),
+            1 => Command::Set(Setting::Fps),
+            2 => Command::Set(Setting::Shake),
+            3 => Command::Set(Setting::VSync),
+            _ => Command::Go(Page::Title),
+        })
     }
 
     fn scores(&mut self, scores: &[Score], nav: &Nav) -> Option<Command> {

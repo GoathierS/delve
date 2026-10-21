@@ -78,10 +78,23 @@ pub struct Profile {
     /// Size of the interface, 1 being the default.
     #[serde(default = "one")]
     pub ui_scale: f32,
+    /// Frames per second shown in a corner.
+    #[serde(default)]
+    pub show_fps: bool,
+    /// The screen shakes when the hero is hit.
+    #[serde(default = "yes")]
+    pub screen_shake: bool,
+    /// Frames wait for the display's refresh, which avoids tearing.
+    #[serde(default = "yes")]
+    pub vsync: bool,
 }
 
 fn one() -> f32 {
     1.0
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +117,7 @@ impl std::fmt::Display for BuyError {
 
 impl Default for Profile {
     fn default() -> Self {
-        Profile { purse: 0, owned: vec![], ui_scale: 1.0 }
+        Profile { purse: 0, owned: vec![], ui_scale: 1.0, show_fps: false, screen_shake: true, vsync: true }
     }
 }
 

@@ -21,7 +21,7 @@ use macroquad::miniquad::conf::{Icon, Platform};
 use macroquad::prelude::*;
 
 use fx::{Fx, tile_center};
-use menu::{Command, Menu, Page};
+use menu::{Command, Menu, Page, Setting};
 use render::{Ending, View};
 
 /// Held keys repeat after this delay, then at this interval.
@@ -37,6 +37,7 @@ fn window_conf() -> Conf {
         Some((w.parse().ok()?, h.parse().ok()?))
     });
     let (width, height) = size.unwrap_or((1440, 900));
+    let vsync = Storage::default_location().profile().vsync;
     Conf {
         window_title: "delve".into(),
         window_width: width,
@@ -45,7 +46,11 @@ fn window_conf() -> Conf {
         high_dpi: true,
         icon: Some(icon()),
         // Lets the desktop match the window with delve.desktop, and show its icon.
-        platform: Platform { linux_wm_class: "delve", ..Default::default() },
+        platform: Platform {
+            linux_wm_class: "delve",
+            swap_interval: Some(if vsync { 1 } else { 0 }),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -144,7 +149,7 @@ impl Run {
     }
 
     fn view(&self) -> View {
-        let shake = if self.fx.shake > 0.0 {
+        let shake = if self.fx.shake > 0.0 && ui::shake() {
             vec2(rand::gen_range(-1.0, 1.0), rand::gen_range(-1.0, 1.0)) * self.fx.shake * 24.0
         } else {
             Vec2::ZERO
@@ -392,13 +397,44 @@ struct Delve {
     sheet: Texture2D,
     menu: Menu,
     run: Option<Run>,
+    /// The high scores and whether a run is saved, read once between runs rather than
+    /// from the disk on every frame of the menus.
+    scores: Vec<Score>,
+    has_save: bool,
 }
 
 impl Delve {
     fn new(storage: Storage, sheet: Texture2D) -> Self {
         let profile = storage.profile();
         ui::set_user_scale(profile.ui_scale);
-        Delve { storage, profile, sheet, menu: Menu::new(), run: None }
+        ui::set_shake(profile.screen_shake);
+        let (scores, has_save) = (storage.scores(), storage.has_save());
+        Delve { storage, profile, sheet, menu: Menu::new(), run: None, scores, has_save }
+    }
+
+    /// Rereads what a run may have changed on the disk.
+    fn refresh(&mut self) {
+        self.profile = self.storage.profile();
+        self.scores = self.storage.scores();
+        self.has_save = self.storage.has_save();
+    }
+
+    fn set(&mut self, setting: Setting) {
+        match setting {
+            Setting::Scale(step) => {
+                ui::set_user_scale(ui::user_scale() + step);
+                self.profile.ui_scale = ui::user_scale();
+            }
+            Setting::Fps => self.profile.show_fps = !self.profile.show_fps,
+            Setting::Shake => {
+                self.profile.screen_shake = !self.profile.screen_shake;
+                ui::set_shake(self.profile.screen_shake);
+            }
+            Setting::VSync => self.profile.vsync = !self.profile.vsync,
+        }
+        if let Err(e) = self.storage.save_profile(&self.profile) {
+            eprintln!("delve: could not save the settings: {e}");
+        }
     }
 
     fn new_run(&mut self) {
@@ -417,20 +453,22 @@ impl Delve {
         }
     }
 
-    /// `+` and `-` resize the interface on every screen; the choice is kept.
-    fn resize(&mut self, typed: &[char]) {
-        let step = typed.iter().map(|c| match c {
-            '+' | '=' => 0.1,
-            '-' => -0.1,
-            _ => 0.0,
-        });
-        let step: f32 = step.sum();
+    /// Keys that work on every screen: `+` and `-` resize the interface, F3 shows the
+    /// frame rate. The choices are kept.
+    fn global_keys(&mut self, typed: &[char]) {
+        let step: f32 = typed
+            .iter()
+            .map(|c| match c {
+                '+' | '=' => 0.1,
+                '-' => -0.1,
+                _ => 0.0,
+            })
+            .sum();
         if step != 0.0 {
-            ui::set_user_scale(ui::user_scale() + step);
-            self.profile.ui_scale = ui::user_scale();
-            if let Err(e) = self.storage.save_profile(&self.profile) {
-                eprintln!("delve: could not save the settings: {e}");
-            }
+            self.set(Setting::Scale(step));
+        }
+        if is_key_pressed(KeyCode::F3) {
+            self.set(Setting::Fps);
         }
     }
 
@@ -440,7 +478,7 @@ impl Delve {
         while let Some(c) = get_char_pressed() {
             typed.push(c);
         }
-        self.resize(&typed);
+        self.global_keys(&typed);
 
         if let Some(run) = &mut self.run {
             let leave = run.handle_input(&typed, &self.storage);
@@ -450,21 +488,23 @@ impl Delve {
                 Leave::Stay => {}
                 Leave::Menu => {
                     self.run = None;
-                    self.profile = self.storage.profile();
+                    self.refresh();
                 }
                 Leave::NewRun => {
-                    self.profile = self.storage.profile();
+                    self.refresh();
                     self.new_run();
                 }
             }
             return true;
         }
 
-        let scores = self.storage.scores();
-        let has_save = self.storage.has_save();
-        match self.menu.frame(&self.sheet, &self.profile, &scores, has_save) {
+        match self.menu.frame(&self.sheet, &self.profile, &self.scores, self.has_save) {
             None => {}
-            Some(Command::Continue) => self.resume(),
+            Some(Command::Continue) => {
+                self.resume();
+                self.has_save = false;
+            }
+            Some(Command::Set(setting)) => self.set(setting),
             Some(Command::NewRun) => self.new_run(),
             Some(Command::Quit) => return false,
             Some(Command::Go(page)) => self.menu.page = page,
@@ -506,10 +546,27 @@ async fn main() {
         let _ = std::fs::remove_dir_all(&dir);
         let mut delve = Delve::new(Storage::new(dir), sheet);
         stage(&mut delve, std::env::var("DELVE_SCENE").as_deref().unwrap_or("fight"));
+        // `DELVE_BENCH=600` plays that many frames of the scene instead and prints how long
+        // the game spent on them.
+        let bench: Option<u32> = std::env::var("DELVE_BENCH").ok().and_then(|n| n.parse().ok());
         let mut frame = 0;
+        let mut work = vec![];
         loop {
             frame += 1;
+            let start = std::time::Instant::now();
             delve.frame();
+            work.push(start.elapsed().as_secs_f64() * 1000.0);
+            if let Some(frames) = bench {
+                if frame == frames {
+                    work.sort_by(f64::total_cmp);
+                    let mean = work.iter().sum::<f64>() / work.len() as f64;
+                    let p99 = work[work.len() * 99 / 100];
+                    println!("{frames} frames · game {mean:.2} ms on average · 99% under {p99:.2} ms");
+                    return;
+                }
+                next_frame().await;
+                continue;
+            }
             // Read the picture before `next_frame` presents it and starts the next one.
             if frame == 12 {
                 // Translucent layers leave holes in the framebuffer's alpha, which a window
@@ -526,14 +583,23 @@ async fn main() {
     #[cfg(target_os = "linux")]
     desktop::register();
     let mut delve = Delve::new(Storage::default_location(), sheet);
+    // Smoothed frame time and time spent by the game, for the frame rate counter.
+    let (mut frame_ms, mut work_ms) = (16.7f32, 0.0f32);
     loop {
         if is_quit_requested() {
             delve.quit();
             break;
         }
+        let start = std::time::Instant::now();
         if !delve.frame() {
             delve.quit();
             break;
+        }
+        let k = 0.05;
+        work_ms += (start.elapsed().as_secs_f32() * 1000.0 - work_ms) * k;
+        frame_ms += (get_frame_time() * 1000.0 - frame_ms) * k;
+        if delve.profile.show_fps {
+            ui::fps_overlay(1000.0 / frame_ms.max(0.1), frame_ms, work_ms);
         }
         next_frame().await;
     }
@@ -555,6 +621,9 @@ fn stage(delve: &mut Delve, scene: &str) {
         }
         "cover" => {
             delve.menu.page = Page::Cover;
+        }
+        "options" => {
+            delve.menu.page = Page::Options;
         }
         _ => {
             let mut run = Run::new(Game::equipped(7, &delve.profile.loadout()));
