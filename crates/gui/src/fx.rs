@@ -14,11 +14,18 @@ const HERO: u32 = 0;
 const FLOAT_TIME: f32 = 0.9;
 const FADE_TIME: f32 = 0.45;
 const LUNGE_TIME: f32 = 0.16;
+const FLAME_TIME: f32 = 0.35;
 
 pub struct Floater {
     pub at: Vec2,
     pub text: String,
     pub color: Color,
+    pub age: f32,
+}
+
+/// A puff of thrown fire on one cell; cells further along start later.
+pub struct Flame {
+    pub at: Vec2,
     pub age: f32,
 }
 
@@ -34,6 +41,7 @@ pub struct Fx {
     shown: HashMap<u32, Vec2>,
     pub floaters: Vec<Floater>,
     pub corpses: Vec<Corpse>,
+    pub flames: Vec<Flame>,
     /// Hero's bump toward what they hit: direction and time left.
     lunge: Option<(Vec2, f32)>,
     /// 1 right after the hero is hurt, fading to 0.
@@ -70,12 +78,21 @@ impl Fx {
                     self.corpses.push(Corpse { at: tile_center(pos), sprite: sprites::monster(kind), age: 0.0 });
                 }
                 Event::Healed { amount } => self.float(game.player, format!("+{amount}"), GREEN),
+                Event::Dodged { pos } => self.float(pos, "dodged".into(), Color::from_rgba(150, 200, 255, 255)),
+                Event::Stunned { pos } => self.float(pos, "stunned".into(), Color::from_rgba(255, 230, 120, 255)),
+                Event::Shade { pos } => self.float(pos, "a shade!".into(), Color::from_rgba(190, 140, 255, 255)),
+                Event::Fire { ref path } => {
+                    for (i, &p) in path.iter().enumerate() {
+                        self.flames.push(Flame { at: tile_center(p), age: -(i as f32) * 0.04 });
+                    }
+                }
                 Event::LevelUp => self.float(game.player, "LEVEL UP".into(), GOLD),
                 Event::PickedUp { pos, kind } => {
                     let text = match kind {
                         ItemKind::Potion => "+1 potion".to_string(),
                         ItemKind::Gold(n) => format!("+{n} gold"),
                         ItemKind::Amulet => "the Amulet!".to_string(),
+                        ItemKind::Oil => "+oil".to_string(),
                     };
                     self.float(pos, text, Color::from_rgba(255, 210, 60, 255));
                 }
@@ -121,6 +138,10 @@ impl Fx {
             c.age += dt;
         }
         self.corpses.retain(|c| c.age < FADE_TIME);
+        for f in &mut self.flames {
+            f.age += dt;
+        }
+        self.flames.retain(|f| f.age < FLAME_TIME);
         if let Some((_, t)) = &mut self.lunge {
             *t -= dt;
         }
@@ -147,6 +168,10 @@ impl Fx {
 
     pub fn float_progress(f: &Floater) -> f32 {
         (f.age / FLOAT_TIME).clamp(0.0, 1.0)
+    }
+
+    pub fn flame_progress(f: &Flame) -> f32 {
+        (f.age / FLAME_TIME).clamp(0.0, 1.0)
     }
 
     pub fn fade_progress(c: &Corpse) -> f32 {

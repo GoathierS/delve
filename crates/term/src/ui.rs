@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Gauge, Paragraph, Wrap};
 
-use delve_core::game::{Game, State, Tone};
+use delve_core::game::{Ability, Game, State, THROW_COST, TORCH_MAX, Tone};
 use delve_core::map::{self, Pos, Tile};
 
 const WALL: Color = Color::Rgb(150, 140, 130);
@@ -17,14 +17,20 @@ const FLOOR_SEEN: Color = Color::Rgb(40, 40, 48);
 const HERO: Color = Color::Rgb(255, 230, 120);
 const GOLD: Color = Color::Rgb(255, 200, 40);
 const POTION: Color = Color::Rgb(240, 90, 200);
+const OIL: Color = Color::Rgb(255, 150, 40);
+const THREAT: Color = Color::Rgb(110, 15, 15);
 
-pub fn draw(f: &mut Frame, game: &Game) {
+pub fn draw(f: &mut Frame, game: &Game, aim: Option<Ability>) {
     let [top, log] = Layout::vertical([Constraint::Min(10), Constraint::Length(8)]).areas(f.area());
     let [map_area, side] = Layout::horizontal([Constraint::Min(20), Constraint::Length(28)]).areas(top);
 
+    let title = match aim {
+        Some(a) => format!(" {}: choose a direction ", a.name()),
+        None => format!(" delve · floor {} ", game.depth),
+    };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .title(format!(" delve · floor {} ", game.depth))
+        .title(title)
         .title_style(Style::new().add_modifier(Modifier::BOLD));
     let inner = block.inner(map_area);
     f.render_widget(block, map_area);
@@ -56,6 +62,10 @@ fn draw_map(buf: &mut Buffer, area: Rect, game: &Game) {
                 && let Some(cell) = buf.cell_mut((area.x + sx, area.y + sy))
             {
                 cell.set_char(ch).set_fg(color);
+                // The cells of coming blows, on a red ground.
+                if game.map.is_visible(p) && game.threatened(p) {
+                    cell.set_bg(THREAT);
+                }
             }
         }
     }
@@ -77,6 +87,7 @@ fn glyph_at(game: &Game, p: Pos) -> Option<(char, Color)> {
             let kind = game.items[i].kind;
             let color = match kind.glyph() {
                 '!' => POTION,
+                '%' => OIL,
                 _ => GOLD,
             };
             return Some((kind.glyph(), color));
@@ -102,6 +113,7 @@ fn monster_color(glyph: char) -> Color {
         'T' => Color::Rgb(90, 170, 170),
         'W' => Color::Rgb(200, 200, 255),
         'D' => Color::Rgb(255, 60, 40),
+        'S' => Color::Rgb(150, 110, 200),
         _ => Color::White,
     }
 }
@@ -110,8 +122,9 @@ fn draw_side(f: &mut Frame, area: Rect, game: &Game) {
     let block = Block::bordered().border_type(BorderType::Rounded).title(" hero ");
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let [hp, xp, stats] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    let [hp, xp, torch, stats] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)])
+            .areas(inner);
 
     let s = game.stats;
     let ratio = (s.hp as f64 / s.max_hp as f64).clamp(0.0, 1.0);
@@ -137,6 +150,14 @@ fn draw_side(f: &mut Frame, area: Rect, game: &Game) {
             .gauge_style(Style::new().fg(Color::Blue).bg(Color::Rgb(40, 40, 40))),
         xp,
     );
+    let label = if game.torch > 0 { format!("Torch {}/{TORCH_MAX}", game.torch) } else { "Torch out!".into() };
+    f.render_widget(
+        Gauge::default()
+            .ratio((game.torch as f64 / TORCH_MAX as f64).clamp(0.0, 1.0))
+            .label(label)
+            .gauge_style(Style::new().fg(OIL).bg(Color::Rgb(40, 40, 40))),
+        torch,
+    );
 
     let dim = Style::new().fg(Color::DarkGray);
     let key = Style::new().fg(Color::Cyan);
@@ -150,6 +171,22 @@ fn draw_side(f: &mut Frame, area: Rect, game: &Game) {
         Line::styled(format!("Turn {} · seed {}", game.turn, game.seed), dim),
         Line::raw(""),
     ];
+    for (key, ability) in ['d', 'f', 't'].into_iter().zip(Ability::ALL) {
+        let cd = game.cooldown(ability);
+        let state = if cd > 0 {
+            format!("in {cd}")
+        } else if ability == Ability::Throw && game.torch < THROW_COST {
+            "no light".into()
+        } else {
+            "ready".into()
+        };
+        let style = if game.can_use(ability).is_ok() { Style::new().fg(Color::Yellow) } else { dim };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{key} {:<12}", ability.name()), style),
+            Span::styled(state, dim),
+        ]));
+    }
+    lines.push(Line::raw(""));
     for (k, what) in [
         ("arrows hjkl", "move"),
         ("yubn", "diagonals"),
@@ -157,6 +194,8 @@ fn draw_side(f: &mut Frame, area: Rect, game: &Game) {
         (". space", "wait"),
         (">", "go down"),
         ("p", "drink potion"),
+        ("d f t +dir", "abilities"),
+        ("red ground", "blows to come"),
         ("q", "quit"),
     ] {
         lines.push(Line::from(vec![Span::styled(format!("{k:<12}"), key), Span::styled(what, dim)]));
@@ -232,7 +271,7 @@ mod tests {
 
     fn render(game: &Game, w: u16, h: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-        terminal.draw(|f| draw(f, game)).unwrap();
+        terminal.draw(|f| draw(f, game, None)).unwrap();
         let buf = terminal.backend().buffer();
         (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n").collect()
     }

@@ -1,6 +1,6 @@
 //! Drawing a run: the dungeon and its interface.
 
-use delve_core::game::{FOV_RADIUS, Game, ItemKind, LAST_DEPTH, State, Tone};
+use delve_core::game::{Ability, Game, ItemKind, LAST_DEPTH, State, THROW_COST, TORCH_MAX, Tone};
 use delve_core::gear::Slot;
 use delve_core::map::{self, Pos, Tile};
 use delve_core::save::Score;
@@ -37,10 +37,21 @@ pub struct Ending<'a> {
     pub purse: i32,
 }
 
-pub fn draw(game: &Game, fx: &Fx, view: &View, sheet: &Texture2D, hover: Option<Pos>, ending: Option<Ending>) {
+pub fn draw(
+    game: &Game,
+    fx: &Fx,
+    view: &View,
+    sheet: &Texture2D,
+    hover: Option<Pos>,
+    aim: Option<Ability>,
+    ending: Option<Ending>,
+) {
     clear_background(ui::BACKGROUND);
     set_camera(&ui::ui_camera());
     draw_world(game, fx, view, sheet);
+    if let Some(ability) = aim {
+        draw_aim(game, view, ability);
+    }
     let size = ui::size();
     if fx.hurt > 0.0 {
         draw_rectangle(0.0, 0.0, size.x, size.y, Color::new(0.8, 0.0, 0.0, 0.22 * fx.hurt));
@@ -49,6 +60,13 @@ pub fn draw(game: &Game, fx: &Fx, view: &View, sheet: &Texture2D, hover: Option<
     draw_hud(game, sheet);
     draw_log(game);
     draw_help();
+    if let Some(ability) = aim {
+        let text = format!("{}: choose a direction      Esc cancels", capitalized(ability.name()));
+        let w = ui::measure(&text, 22.0, Face::Bold) + 48.0;
+        let r = Rect::new((size.x - w) / 2.0, 20.0, w, 50.0);
+        ui::card(r, true);
+        ui::centered(&text, size.x / 2.0, r.y + 33.0, 22.0, Face::Bold, GOLDEN);
+    }
     if let Some(cell) = hover
         && ending.is_none()
     {
@@ -66,7 +84,7 @@ fn light(game: &Game, p: Pos) -> Option<Color> {
     if game.map.is_visible(p) {
         let t = get_time() as f32;
         let flicker = 1.0 + 0.05 * (t * 6.3).sin() + 0.03 * (t * 14.7).sin();
-        let d = tile_center(p).distance(tile_center(game.player)) / ((FOV_RADIUS as f32 + 1.0) * flicker);
+        let d = tile_center(p).distance(tile_center(game.player)) / ((game.light_radius() as f32 + 1.0) * flicker);
         let l = 1.0 - 0.6 * d * d;
         Some(Color::new(l, l * 0.94, l * 0.84, 1.0))
     } else if game.map.is_explored(p) {
@@ -113,6 +131,8 @@ fn draw_world(game: &Game, fx: &Fx, view: &View, sheet: &Texture2D) {
         }
     }
 
+    draw_threats(game, view);
+
     for item in game.items.iter().filter(|i| game.map.is_visible(i.pos)) {
         let tint = light(game, item.pos).unwrap_or(WHITE);
         // Items bob gently so that they catch the eye.
@@ -145,6 +165,16 @@ fn draw_world(game: &Game, fx: &Fx, view: &View, sheet: &Texture2D) {
         }
     }
 
+    for f in &fx.flames {
+        if f.age < 0.0 {
+            continue;
+        }
+        let k = Fx::flame_progress(f);
+        let at = view.to_screen(f.at);
+        draw_circle(at.x, at.y, t * 0.42 * (1.0 - 0.5 * k), Color::new(1.0, 0.45, 0.05, 0.7 * (1.0 - k)));
+        draw_circle(at.x, at.y, t * 0.24 * (1.0 - 0.6 * k), Color::new(1.0, 0.85, 0.3, 0.9 * (1.0 - k)));
+    }
+
     let hero = view.to_screen(fx.hero(game)) - vec2(t, t) / 2.0;
     let tint = if game.state == State::Dead { Color::new(0.6, 0.2, 0.2, 0.7) } else { WHITE };
     sprite(sheet, sprites::HERO, hero, t, tint);
@@ -162,6 +192,64 @@ fn draw_world(game: &Game, fx: &Fx, view: &View, sheet: &Texture2D) {
     }
 }
 
+/// The cells each visible monster is about to hit, pulsing red; where blows overlap the red
+/// deepens, and the hero's cell is outlined when they stand in one.
+fn draw_threats(game: &Game, view: &View) {
+    let t = view.tile;
+    let pulse = 0.5 + 0.5 * (get_time() as f32 * 5.0).sin();
+    for m in game.monsters.iter().filter(|m| game.map.is_visible(m.pos)) {
+        let Some(cells) = &m.intent else { continue };
+        for &c in cells.iter().filter(|&&c| game.map.is_explored(c)) {
+            let at = view.to_screen(tile_center(c)) - vec2(t, t) / 2.0;
+            draw_rectangle(at.x + 2.0, at.y + 2.0, t - 4.0, t - 4.0, Color::new(0.75, 0.0, 0.05, 0.34 + 0.16 * pulse));
+            draw_rectangle_lines(at.x + 2.0, at.y + 2.0, t - 4.0, t - 4.0, 3.0, Color::new(1.0, 0.15, 0.15, 0.9));
+        }
+    }
+    if game.threatened(game.player) {
+        let at = view.to_screen(tile_center(game.player)) - vec2(t, t) / 2.0;
+        draw_rectangle_lines(at.x, at.y, t, t, 4.0, Color::new(1.0, 0.2, 0.15, 0.6 + 0.4 * pulse));
+    }
+}
+
+/// Where the ability being aimed would land, in each of the eight directions.
+fn draw_aim(game: &Game, view: &View, ability: Ability) {
+    let t = view.tile;
+    let me = game.player;
+    let free = |p: Pos| game.map.tile(p).walkable() && game.monster_at(p).is_none();
+    let mark = |p: Pos, color: Color| {
+        let at = view.to_screen(tile_center(p)) - vec2(t, t) / 2.0;
+        draw_rectangle(at.x + 3.0, at.y + 3.0, t - 6.0, t - 6.0, Color { a: 0.22, ..color });
+        draw_rectangle_lines(at.x + 3.0, at.y + 3.0, t - 6.0, t - 6.0, 3.0, color);
+    };
+    for p in map::Map::neighbors(me) {
+        let (dx, dy) = (p.x - me.x, p.y - me.y);
+        let at = |n: i32| Pos::new(me.x + dx * n, me.y + dy * n);
+        match ability {
+            Ability::Dash if free(at(1)) && free(at(2)) => mark(at(2), Color::new(0.4, 0.75, 1.0, 1.0)),
+            Ability::Bash if game.monster_at(at(1)).is_some() => mark(at(1), GOLDEN),
+            Ability::Throw => {
+                for n in 1..=5 {
+                    let c = at(n);
+                    if !game.map.tile(c).walkable() {
+                        break;
+                    }
+                    if game.monster_at(c).is_some() {
+                        mark(c, Color::new(1.0, 0.95, 0.35, 1.0));
+                        break;
+                    }
+                    mark(c, Color::new(1.0, 0.95, 0.35, 0.35));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn capitalized(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
 fn bar(x: f32, y: f32, w: f32, ratio: f32, color: Color, caption: &str) {
     let h = 28.0;
     draw_rectangle(x, y, w, h, Color::new(0.15, 0.14, 0.17, 1.0));
@@ -177,7 +265,7 @@ fn bar(x: f32, y: f32, w: f32, ratio: f32, color: Color, caption: &str) {
 
 fn draw_hud(game: &Game, sheet: &Texture2D) {
     let (x, y, w) = (16.0, 16.0, 320.0);
-    ui::panel(Rect::new(x, y, w, 262.0));
+    ui::panel(Rect::new(x, y, w, 360.0));
     let title =
         if game.depth == LAST_DEPTH { "Floor 10 · the Amulet".to_string() } else { format!("Floor {}", game.depth) };
     ui::text_in(&title, x + 16.0, y + 38.0, 28.0, Face::Title, GOLDEN);
@@ -195,7 +283,17 @@ fn draw_hud(game: &Game, sheet: &Texture2D) {
     let xp = game.xp as f32 / game.xp_to_next() as f32;
     let caption = format!("Level {} · {}/{} XP", game.level, game.xp, game.xp_to_next());
     bar(x + 16.0, y + 88.0, w - 32.0, xp, Color::new(0.25, 0.4, 0.85, 1.0), &caption);
+    let torch = game.torch as f32 / TORCH_MAX as f32;
+    let (caption, color) = if game.torch > 0 {
+        let low = game.torch < TORCH_MAX / 5;
+        let color = if low { Color::new(0.75, 0.25, 0.1, 1.0) } else { Color::new(0.9, 0.5, 0.12, 1.0) };
+        (format!("Torch {}/{}", game.torch, TORCH_MAX), color)
+    } else {
+        ("Torch out · the dark hunts you".to_string(), BAD)
+    };
+    bar(x + 16.0, y + 122.0, w - 32.0, torch, color, &caption);
 
+    let y = y + 34.0;
     ui::text(&format!("Attack {}", s.attack), x + 16.0, y + 146.0, 21.0, TEXT);
     ui::text(&format!("Defense {}", s.defense), x + 166.0, y + 146.0, 21.0, TEXT);
 
@@ -211,7 +309,26 @@ fn draw_hud(game: &Game, sheet: &Texture2D) {
     ui::text(&format!("{}  (P)", game.potions), x + 56.0, y + 230.0, 21.0, TEXT);
     sprite(sheet, sprites::GOLD, vec2(x + 156.0, y + 202.0), 40.0, WHITE);
     ui::text(&game.gold.to_string(), x + 200.0, y + 230.0, 21.0, GOLDEN);
-    ui::text(&format!("turn {} · seed {}", game.turn, game.seed), x + 16.0, y + 254.0, 14.0, DIM);
+
+    // The abilities, with their key and the turns before they are ready.
+    for (i, ability) in Ability::ALL.into_iter().enumerate() {
+        let r = Rect::new(x + 16.0 + i as f32 * 98.0, y + 250.0, 92.0, 48.0);
+        let ready = game.can_use(ability).is_ok();
+        ui::card(r, false);
+        let key = ["D", "F", "T"][i];
+        let label = ["dash", "bash", "fire"][i];
+        let color = if ready { TEXT } else { DIM };
+        ui::text_in(key, r.x + 10.0, r.y + 31.0, 22.0, Face::Bold, if ready { GOLDEN } else { DIM });
+        ui::text(label, r.x + 34.0, r.y + 30.0, 17.0, color);
+        let cd = game.cooldown(ability);
+        if cd > 0 {
+            draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.0, 0.0, 0.0, 0.55));
+            ui::centered(&cd.to_string(), r.x + r.w / 2.0, r.y + 33.0, 24.0, Face::Bold, TEXT);
+        } else if ability == Ability::Throw && game.torch < THROW_COST {
+            draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.0, 0.0, 0.0, 0.55));
+        }
+    }
+    ui::text(&format!("turn {} · seed {}", game.turn, game.seed), x + 16.0, y + 318.0, 14.0, DIM);
 }
 
 fn draw_log(game: &Game) {
@@ -241,6 +358,8 @@ fn draw_help() {
         ("arrows  hjkl", "move, attack"),
         ("y u b n", "diagonals"),
         ("click", "walk there"),
+        ("D  F  T", "dash, bash, fire"),
+        ("red cells", "blows to come"),
         (">  or  Enter", "go down"),
         (".  or  Space", "wait"),
         ("P", "drink a potion"),
@@ -265,16 +384,30 @@ fn draw_tooltip(game: &Game, cell: Pos) {
     }
     let text = if let Some(i) = game.monster_at(cell) {
         let m = &game.monsters[i];
-        let state = if m.awake { "" } else { " · asleep" };
+        let state = if m.stunned > 0 {
+            " · stunned"
+        } else if m.intent.is_some() {
+            " · about to strike"
+        } else if m.awake {
+            ""
+        } else {
+            " · asleep"
+        };
         format!(
-            "{} · {}/{} HP · atk {} def {}{state}",
-            m.kind.name, m.stats.hp, m.stats.max_hp, m.stats.attack, m.stats.defense
+            "{} · {} · {}/{} HP · atk {} def {}{state}",
+            m.kind.name,
+            m.kind.pattern.name(),
+            m.stats.hp,
+            m.stats.max_hp,
+            m.stats.attack,
+            m.stats.defense
         )
     } else if let Some(i) = game.item_at(cell) {
         match game.items[i].kind {
             ItemKind::Potion => "healing potion".into(),
             ItemKind::Gold(n) => format!("{n} gold"),
             ItemKind::Amulet => "the Amulet".into(),
+            ItemKind::Oil => format!("flask of oil · +{} torch", delve_core::game::OIL),
         }
     } else if game.map.tile(cell) == Tile::StairsDown {
         "stairs down".into()

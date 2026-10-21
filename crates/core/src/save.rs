@@ -140,7 +140,7 @@ impl Storage {
         let file: SaveFile = ron::from_str(&text).map_err(|e| LoadError::Incompatible(e.to_string()))?;
         debug_assert_eq!(file.version, SAVE_VERSION);
         let mut game = file.game;
-        game.map.compute_fov(game.player, crate::game::FOV_RADIUS);
+        game.refresh_sight();
         Ok(Some(game))
     }
 

@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
-use delve_core::game::{Action, Game, State, Tone};
+use delve_core::game::{Ability, Action, Game, State, Tone};
 use delve_core::save::Storage;
 
 const USAGE: &str = "usage: delve-term [--seed N]
@@ -70,8 +70,10 @@ fn run(mut terminal: DefaultTerminal, mut game: Game, storage: &Storage) -> io::
     // Leaving mid-run saves it; the run is entered in the scores once, when it ends.
     let quit = |game: &Game| if game.state == State::Playing { storage.save(game) } else { Ok(()) };
     let mut finished = false;
+    // The ability waiting for a direction, if any.
+    let mut aim: Option<Ability> = None;
     loop {
-        terminal.draw(|f| ui::draw(f, &game))?;
+        terminal.draw(|f| ui::draw(f, &game, aim))?;
         let Event::Key(key) = event::read()? else { continue };
         if key.kind != KeyEventKind::Press {
             continue;
@@ -79,8 +81,26 @@ fn run(mut terminal: DefaultTerminal, mut game: Game, storage: &Storage) -> io::
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return quit(&game);
         }
+        if let Some(ability) = aim.take() {
+            // The next direction fires the ability; anything else puts it away.
+            if let Some(Action::Move(dx, dy)) = action_for(key.code) {
+                game.act(Action::Use(ability, dx, dy));
+            }
+            continue;
+        }
         match (game.state, key.code) {
             (_, KeyCode::Char('q') | KeyCode::Esc) => return quit(&game),
+            (State::Playing, KeyCode::Char(c @ ('d' | 'f' | 't'))) => {
+                let ability = match c {
+                    'd' => Ability::Dash,
+                    'f' => Ability::Bash,
+                    _ => Ability::Throw,
+                };
+                match game.can_use(ability) {
+                    Ok(()) => aim = Some(ability),
+                    Err(why) => game.say(why, Tone::Normal),
+                }
+            }
             (State::Dead | State::Won, KeyCode::Char('r')) => {
                 game = new_run(storage, random_seed());
                 finished = false;

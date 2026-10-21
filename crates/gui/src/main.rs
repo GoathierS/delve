@@ -9,7 +9,7 @@ mod ui;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use delve_core::game::{Action, Game, State, Tone};
+use delve_core::game::{Ability, Action, Game, State, Tone};
 use delve_core::gear::Profile;
 use delve_core::map::Pos;
 use delve_core::save::{Score, Storage};
@@ -103,7 +103,12 @@ struct Run {
     travel_timer: f32,
     /// When each movement key went down, and when it last fired.
     held: HashMap<KeyCode, (f64, f64)>,
+    /// The ability waiting for a direction, if any.
+    aim: Option<Ability>,
 }
+
+/// The key of each ability, in [`Ability::ALL`] order.
+const ABILITY_KEYS: [KeyCode; 3] = [KeyCode::D, KeyCode::F, KeyCode::T];
 
 /// What the player asked for during a run.
 enum Leave {
@@ -124,6 +129,7 @@ impl Run {
             travel: vec![],
             travel_timer: 0.0,
             held: HashMap::new(),
+            aim: None,
         }
     }
 
@@ -206,8 +212,38 @@ impl Run {
             return Leave::Stay;
         }
         if is_key_pressed(KeyCode::Escape) {
+            if self.aim.take().is_some() {
+                return Leave::Stay;
+            }
             self.quit(storage);
             return Leave::Menu;
+        }
+
+        // An ability's key starts aiming it; the next direction, or a click, fires it.
+        for (key, ability) in ABILITY_KEYS.into_iter().zip(Ability::ALL) {
+            if is_key_pressed(key) {
+                match self.game.can_use(ability) {
+                    Ok(()) => {
+                        self.aim = if self.aim == Some(ability) { None } else { Some(ability) };
+                        self.travel.clear();
+                    }
+                    Err(why) => self.game.say(why, Tone::Normal),
+                }
+            }
+        }
+        if let Some(ability) = self.aim {
+            let mut dir = self.held_move();
+            if is_mouse_button_pressed(MouseButton::Left) {
+                let (cell, me) = (self.view().to_cell(ui::mouse()), self.game.player);
+                if cell != me {
+                    dir = Some(((cell.x - me.x).signum(), (cell.y - me.y).signum()));
+                }
+            }
+            if let Some((dx, dy)) = dir {
+                self.aim = None;
+                self.act(Action::Use(ability, dx, dy), storage);
+            }
+            return Leave::Stay;
         }
 
         let mut action = self.held_move().map(|(dx, dy)| Action::Move(dx, dy));
@@ -264,7 +300,8 @@ impl Run {
         let seen_before = self.visible_monsters();
         let hp = self.game.stats.hp;
         self.act(Action::Move(next.x - me.x, next.y - me.y), storage);
-        if self.visible_monsters() > seen_before || self.game.stats.hp < hp || self.game.player != next {
+        let danger = self.game.threatened(self.game.player);
+        if self.visible_monsters() > seen_before || self.game.stats.hp < hp || self.game.player != next || danger {
             self.travel.clear();
             self.game.say("You stop: something is nearby.", Tone::Normal);
         }
@@ -286,7 +323,7 @@ impl Run {
         let view = self.view();
         let hover = Some(view.to_cell(ui::mouse()));
         let ending = self.ending.as_ref().map(|(scores, rank, purse)| Ending { scores, rank: *rank, purse: *purse });
-        render::draw(&self.game, &self.fx, &view, sheet, hover, ending);
+        render::draw(&self.game, &self.fx, &view, sheet, hover, self.aim, ending);
     }
 }
 
@@ -302,12 +339,36 @@ fn stage_fight(app: &mut Run, storage: &Storage) {
         .min_by_key(|&p| dist[delve_core::map::Map::index(p)]);
     if let Some(p) = next_to {
         app.game.player = p;
-        app.game.map.compute_fov(p, delve_core::game::FOV_RADIUS);
+        app.game.refresh_sight();
         app.camera = tile_center(p);
         for _ in 0..2 {
             app.act(Action::Move(target.x - p.x, target.y - p.y), storage);
         }
     }
+    // An orc joins in and marks its cleave, so that the picture shows a coming blow.
+    let me = app.game.player;
+    let free = delve_core::map::Map::neighbors(me)
+        .filter(|&p| app.game.map.tile(p).walkable() && app.game.monster_at(p).is_none())
+        .max_by_key(|&p| (p.x - me.x).abs() + (p.y - me.y).abs() == 1);
+    if let Some(pos) = free {
+        add_monster(app, "orc", pos, 99);
+        app.act(Action::Wait, storage);
+    }
+}
+
+fn add_monster(app: &mut Run, name: &str, pos: Pos, hp: i32) {
+    let kind = delve_core::game::BESTIARY.iter().find(|k| k.name == name).unwrap();
+    let stats = delve_core::game::Stats { hp, max_hp: hp, attack: kind.attack, defense: kind.defense };
+    let monster = delve_core::game::Monster {
+        id: 900 + app.game.monsters.len() as u32,
+        kind,
+        pos,
+        stats,
+        awake: true,
+        intent: None,
+        stunned: 0,
+    };
+    app.game.monsters.push(monster);
 }
 
 /// The whole program: the menus, and the run being played if any.
@@ -423,7 +484,7 @@ async fn main() {
 
     // `DELVE_SCREENSHOT=out.png delve` renders a few frames of a fixed scene, saves one
     // and quits, away from the real save; used for the README. `DELVE_SCENE` picks the
-    // scene: `fight` (the default), `death`, `menu` or `armory`.
+    // scene: `fight` (the default), `aim`, `death`, `menu` or `armory`.
     let screenshot = std::env::var_os("DELVE_SCREENSHOT");
     if let Some(path) = screenshot {
         let dir = std::env::temp_dir().join("delve-screenshot");
@@ -483,10 +544,8 @@ fn stage(delve: &mut Delve, scene: &str) {
                 let free = delve_core::map::Map::neighbors(me)
                     .find(|&p| run.game.map.tile(p).walkable() && run.game.monster_at(p).is_none());
                 if let Some(pos) = free {
-                    let kind = delve_core::game::BESTIARY.iter().find(|k| k.name == "troll").unwrap();
-                    let stats =
-                        delve_core::game::Stats { hp: kind.hp, max_hp: kind.hp, attack: 99, defense: kind.defense };
-                    run.game.monsters.push(delve_core::game::Monster { id: 999, kind, pos, stats, awake: true });
+                    add_monster(&mut run, "troll", pos, 99);
+                    run.game.monsters.last_mut().unwrap().stats.attack = 99;
                 }
                 for _ in 0..20 {
                     if run.game.state != State::Playing {
@@ -494,6 +553,9 @@ fn stage(delve: &mut Delve, scene: &str) {
                     }
                     run.act(Action::Wait, &delve.storage);
                 }
+            }
+            if scene == "aim" {
+                run.aim = Some(Ability::Throw);
             }
             delve.run = Some(run);
         }

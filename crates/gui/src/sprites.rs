@@ -19,6 +19,7 @@ pub const POTION: u32 = 115;
 pub const GOLD: u32 = 89;
 const AMULET: u32 = 44;
 pub const DAGGER: u32 = 103;
+const OIL: u32 = 113;
 
 /// Where tile `index` lies in the sheet.
 pub fn source(index: u32) -> Rect {
@@ -35,6 +36,7 @@ pub fn monster(kind: &Kind) -> u32 {
         "troll" => 109,
         "wraith" => 121,
         "demon" => 110,
+        "shade" => 111,
         _ => 111,
     }
 }
@@ -70,6 +72,7 @@ pub fn item(kind: ItemKind) -> u32 {
         ItemKind::Potion => POTION,
         ItemKind::Gold(_) => GOLD,
         ItemKind::Amulet => AMULET,
+        ItemKind::Oil => OIL,
     }
 }
 
