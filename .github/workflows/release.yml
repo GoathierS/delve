@@ -1,0 +1,60 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 builds delve for Linux, Windows and macOS and publishes
+# the archives in a GitHub release of that name.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: windows-latest
+            name: windows-x86_64
+          - os: macos-latest
+            name: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --workspace
+      - name: Package
+        shell: bash
+        run: |
+          dir="delve-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          mkdir "$dir"
+          cp README.md LICENSE "$dir/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp target/release/delve.exe target/release/delve-term.exe "$dir/"
+            7z a "$dir.zip" "$dir" > /dev/null
+          else
+            cp target/release/delve target/release/delve-term "$dir/"
+            if [ "$RUNNER_OS" = Linux ]; then
+              cp install.sh crates/gui/assets/delve.png "$dir/"
+            fi
+            tar czf "$dir.tar.gz" "$dir"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: delve-*.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" delve-* --repo "$GITHUB_REPOSITORY" --title "delve $GITHUB_REF_NAME" --generate-notes

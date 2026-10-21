@@ -6,6 +6,7 @@
 
 **A small roguelike about light, gold, and knowing when to leave.**
 
+[![CI](https://github.com/GoathierS/delve/actions/workflows/ci.yml/badge.svg)](https://github.com/GoathierS/delve/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
 <img src="docs/menu.png" width="720" alt="The title screen">
@@ -43,7 +44,21 @@ lost if you die down there.
   <img src="docs/armory.png" width="49%" alt="The armory">
 </p>
 
-## Install
+## Download
+
+Ready-to-play builds for Linux, Windows and macOS (Apple Silicon) are on the
+[releases page](https://github.com/GoathierS/delve/releases/latest).
+
+- **Linux**: extract the archive and run `./install.sh` to add delve to your
+  applications menu, or just run `./delve`.
+- **Windows**: extract the zip and run `delve.exe`. Windows may warn that the app
+  is unrecognized: choose *More info*, then *Run anyway*.
+- **macOS**: extract the archive. The app is not signed, so the first time run
+  `xattr -d com.apple.quarantine delve delve-term` in its folder, then `./delve`.
+
+`delve-term` is the same game in a terminal.
+
+## Build from source
 
 You need [Rust](https://rustup.rs). On Linux:
 

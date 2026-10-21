@@ -1,4 +1,6 @@
 //! delve: a small roguelike, drawn with macroquad.
+// No console window behind the game on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod fx;
 mod menu;

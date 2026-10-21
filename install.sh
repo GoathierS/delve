@@ -1,6 +1,7 @@
 #!/bin/sh
-# Installs delve for the current user, with an entry in the applications menu.
-#   ./install.sh            build and install
+# Installs delve for the current user, with an entry in the applications menu. Works
+# from the source tree, which it builds, and from a release archive, already built.
+#   ./install.sh            install
 #   ./install.sh --remove   uninstall (saves and gold are kept)
 set -eu
 
@@ -22,10 +23,17 @@ if [ "${1:-}" = "--remove" ]; then
     exit 0
 fi
 
-cargo build --release --workspace
+if [ -f Cargo.toml ]; then
+    cargo build --release --workspace
+    built=target/release
+    icon=crates/gui/assets/delve.png
+else
+    built=.
+    icon=delve.png
+fi
 mkdir -p "$bin" "$apps" "$icons"
-install -m 755 target/release/delve target/release/delve-term "$bin/"
-install -m 644 crates/gui/assets/delve.png "$icons/delve.png"
+install -m 755 "$built/delve" "$built/delve-term" "$bin/"
+install -m 644 "$icon" "$icons/delve.png"
 cat > "$apps/delve.desktop" <<EOF
 [Desktop Entry]
 Type=Application
