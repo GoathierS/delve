@@ -1,5 +1,7 @@
 # Sends each release to itch.io with butler, called by release.yml once the release is
-# built. It does nothing until the repository has:
+# built. An existing release can also be sent by hand:
+#   gh workflow run publish-itch.yml -f tag=v0.2.0
+# It does nothing until the repository has:
 #   - a variable ITCH_GAME, the page as user/game (e.g. goathiers/delve);
 #   - a secret BUTLER_API_KEY, from https://itch.io/user/settings/api-keys.
 name: Publish to itch.io
@@ -10,6 +12,11 @@ on:
       plan:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release to send, e.g. v0.2.0
+        required: true
 
 jobs:
   itch:
@@ -19,12 +26,17 @@ jobs:
       BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
       ITCH_GAME: ${{ vars.ITCH_GAME }}
       PLAN: ${{ inputs.plan }}
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/download-artifact@v5
+      - if: ${{ inputs.plan != '' }}
+        uses: actions/download-artifact@v5
         with:
           pattern: artifacts-*
           path: artifacts
           merge-multiple: true
+      - if: ${{ inputs.tag != '' }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir artifacts --pattern 'delve-*'
       - name: Install butler
         run: |
           curl -fsSL -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
@@ -33,7 +45,8 @@ jobs:
           butler/butler -V
       - name: Push each system to its channel
         run: |
-          version="$(echo "$PLAN" | jq -r '.announcement_tag' | sed 's/^v//')"
+          tag="${TAG:-$(echo "$PLAN" | jq -r '.announcement_tag')}"
+          version="${tag#v}"
           push() {
             archive="artifacts/$1"
             dir="itch/$2"
