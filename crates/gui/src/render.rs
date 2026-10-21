@@ -107,7 +107,7 @@ pub fn draw_tile(sheet: &Texture2D, map: &map::Map, p: Pos, view: &View, tint: C
     let t = view.tile;
     let at = view.to_screen(tile_center(p)) - vec2(t, t) / 2.0;
     let tile = map.tile(p);
-    if tile == Tile::StairsDown {
+    if matches!(tile, Tile::StairsDown | Tile::Exit) {
         sprite(sheet, sprites::tile(Tile::Floor, p), at, t, tint);
     }
     sprite(sheet, sprites::tile(tile, p), at, t, tint);
@@ -129,6 +129,14 @@ fn draw_world(game: &Game, fx: &Fx, view: &View, sheet: &Texture2D) {
         if let Some(tint) = light(game, p) {
             draw_tile(sheet, &game.map, p, view, tint);
         }
+    }
+
+    // Ways out glow, so that they catch the eye from afar.
+    let glow = 0.5 + 0.5 * (get_time() as f32 * 2.5).sin();
+    for p in on_screen(view).filter(|&p| game.map.tile(p) == Tile::Exit && game.map.is_explored(p)) {
+        let at = view.to_screen(tile_center(p));
+        draw_circle(at.x, at.y, t * (0.7 + 0.1 * glow), Color::new(1.0, 0.85, 0.4, 0.10 + 0.08 * glow));
+        draw_rectangle_lines(at.x - t / 2.0, at.y - t / 2.0, t, t, 2.0, Color::new(1.0, 0.85, 0.4, 0.4 + 0.4 * glow));
     }
 
     draw_threats(game, view);
@@ -266,8 +274,13 @@ fn bar(x: f32, y: f32, w: f32, ratio: f32, color: Color, caption: &str) {
 fn draw_hud(game: &Game, sheet: &Texture2D) {
     let (x, y, w) = (16.0, 16.0, 320.0);
     ui::panel(Rect::new(x, y, w, 360.0));
-    let title =
-        if game.depth == LAST_DEPTH { "Floor 10 · the Amulet".to_string() } else { format!("Floor {}", game.depth) };
+    let title = if game.depth == LAST_DEPTH {
+        "Floor 10 · the Amulet".to_string()
+    } else if Game::has_exit(game.depth) {
+        format!("Floor {} · a way out", game.depth)
+    } else {
+        format!("Floor {}", game.depth)
+    };
     ui::text_in(&title, x + 16.0, y + 38.0, 28.0, Face::Title, GOLDEN);
 
     let s = game.stats;
@@ -309,6 +322,9 @@ fn draw_hud(game: &Game, sheet: &Texture2D) {
     ui::text(&format!("{}  (P)", game.potions), x + 56.0, y + 230.0, 21.0, TEXT);
     sprite(sheet, sprites::GOLD, vec2(x + 156.0, y + 202.0), 40.0, WHITE);
     ui::text(&game.gold.to_string(), x + 200.0, y + 230.0, 21.0, GOLDEN);
+    // Gold only counts once out of the dungeon alive.
+    let stake_x = x + 208.0 + ui::measure(&game.gold.to_string(), 21.0, Face::Regular);
+    ui::text("at stake", stake_x, y + 230.0, 14.0, DIM);
 
     // The abilities, with their key and the turns before they are ready.
     for (i, ability) in Ability::ALL.into_iter().enumerate() {
@@ -361,6 +377,7 @@ fn draw_help() {
         ("D  F  T", "dash, bash, fire"),
         ("red cells", "blows to come"),
         (">  or  Enter", "go down"),
+        ("<", "leave by a way out"),
         (".  or  Space", "wait"),
         ("P", "drink a potion"),
         ("+  −  wheel", "text size, zoom"),
@@ -411,6 +428,8 @@ fn draw_tooltip(game: &Game, cell: Pos) {
         }
     } else if game.map.tile(cell) == Tile::StairsDown {
         "stairs down".into()
+    } else if game.map.tile(cell) == Tile::Exit {
+        "a way out · < to leave with your gold".into()
     } else {
         return;
     };
@@ -431,19 +450,28 @@ fn draw_ending(game: &Game, ending: &Ending) {
     let (x, y) = ((size.x - w) / 2.0, (size.y - h) / 2.0);
     let cx = size.x / 2.0;
     ui::panel(Rect::new(x, y, w, h));
-    let (title, color) = if game.state == State::Won { ("Victory!", GOLDEN) } else { ("You died", BAD) };
+    let (title, color) = match game.state {
+        State::Won => ("Victory!", GOLDEN),
+        State::Escaped => ("Escaped!", GOOD),
+        _ => ("You died", BAD),
+    };
     let tw = ui::measure(title, 58.0, Face::Title);
     ui::shadowed(title, cx - tw / 2.0, y + 72.0, 58.0, Face::Title, color);
     let cause = match (game.state, game.killed_by.as_deref()) {
         (State::Won, _) => format!("You seized the Amulet on floor {}.", game.depth),
+        (State::Escaped, _) => format!("You climbed out from floor {}.", game.depth),
         (_, Some(name)) => format!("Killed by a {name} on floor {}.", game.depth),
         _ => format!("Died on floor {}.", game.depth),
     };
     ui::centered(&cause, cx, y + 116.0, 24.0, Face::Regular, TEXT);
     let summary = format!("Level {} · {} kills", game.level, game.kills);
     ui::centered(&summary, cx, y + 148.0, 20.0, Face::Regular, DIM);
-    let gold = format!("+{} gold to your purse · {} in all", game.gold, ending.purse);
-    ui::centered(&gold, cx, y + 180.0, 21.0, Face::Bold, GOLDEN);
+    let (gold, color) = if game.gold_is_safe() {
+        (format!("+{} gold to your purse · {} in all", game.gold, ending.purse), GOLDEN)
+    } else {
+        (format!("{} gold lost in the dark · {} left in your purse", game.gold, ending.purse), BAD)
+    };
+    ui::centered(&gold, cx, y + 180.0, 21.0, Face::Bold, color);
     let rank = match ending.rank {
         Some(0) => " · best run yet!".to_string(),
         Some(r) => format!(" · #{} of your best runs", r + 1),
@@ -462,6 +490,8 @@ fn draw_ending(game: &Game, ending: &Ending) {
 pub fn score_line(s: &Score, i: usize, x: f32, y: f32, color: Color) {
     let how = if s.won {
         "seized the Amulet".to_string()
+    } else if s.escaped {
+        format!("escaped · floor {}", s.depth)
     } else {
         format!("{} · floor {}", s.killed_by.as_deref().unwrap_or("died"), s.depth)
     };

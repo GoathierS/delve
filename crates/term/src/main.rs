@@ -101,7 +101,7 @@ fn run(mut terminal: DefaultTerminal, mut game: Game, storage: &Storage) -> io::
                     Err(why) => game.say(why, Tone::Normal),
                 }
             }
-            (State::Dead | State::Won, KeyCode::Char('r')) => {
+            (State::Dead | State::Escaped | State::Won, KeyCode::Char('r')) => {
                 game = new_run(storage, random_seed());
                 finished = false;
             }
@@ -136,6 +136,7 @@ fn action_for(code: KeyCode) -> Option<Action> {
         KeyCode::Char('n' | '3') => Action::Move(1, 1),
         KeyCode::Char('.' | ' ' | '5') => Action::Wait,
         KeyCode::Char('>') => Action::Descend,
+        KeyCode::Char('<') => Action::Escape,
         KeyCode::Char('p') => Action::Drink,
         _ => return None,
     })

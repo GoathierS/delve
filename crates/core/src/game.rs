@@ -15,6 +15,8 @@ use crate::rng::Rng;
 pub const FOV_RADIUS: i32 = 8;
 /// The Amulet lies on this floor; bringing it back is not required, picking it up wins.
 pub const LAST_DEPTH: i32 = 10;
+/// Floors that are a multiple of this, before the last, have a way out.
+pub const EXIT_EVERY: i32 = 3;
 const LOG_LEN: usize = 100;
 /// A new hero, before equipment.
 pub const START_STATS: Stats = Stats { hp: 30, max_hp: 30, attack: 5, defense: 1 };
@@ -184,7 +186,10 @@ pub struct Item {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum State {
     Playing,
+    /// Killed: the gold of the run is lost.
     Dead,
+    /// Took a way out, gold and all.
+    Escaped,
     Won,
 }
 
@@ -230,6 +235,8 @@ pub enum Action {
     Move(i32, i32),
     Wait,
     Descend,
+    /// Leaves the dungeon by a way out.
+    Escape,
     Drink,
     /// An ability, aimed in a direction.
     Use(Ability, i32, i32),
@@ -358,12 +365,23 @@ impl Game {
         game.enter_next_floor();
         game.say("You enter the dungeon. Find the Amulet on floor 10.", Tone::Normal);
         game.say("Mind your torch: oil keeps it burning.", Tone::Normal);
+        game.say("Die down there and your gold is lost; ways out wait on floors 3, 6 and 9.", Tone::Normal);
         game
     }
 
     /// The equipment the hero set out with.
     pub fn gear(&self) -> impl Iterator<Item = &'static Gear> + '_ {
         self.gear.iter().filter_map(|name| gear::by_name(name))
+    }
+
+    /// Whether this floor has a way out.
+    pub fn has_exit(depth: i32) -> bool {
+        depth % EXIT_EVERY == 0 && depth < LAST_DEPTH
+    }
+
+    /// Whether the run is over and its gold reached the purse.
+    pub fn gold_is_safe(&self) -> bool {
+        matches!(self.state, State::Escaped | State::Won)
     }
 
     pub fn xp_to_next(&self) -> i32 {
@@ -405,6 +423,13 @@ impl Game {
             let end = rooms.last().unwrap().center();
             self.map.set(end, Tile::Floor);
             self.items.push(Item { kind: ItemKind::Amulet, pos: end });
+        }
+        if Self::has_exit(self.depth) {
+            // Halfway along the chain of rooms: neither by the stairs nor at the start.
+            let exit = rooms[rooms.len() / 2].center();
+            if self.map.tile(exit) == Tile::Floor && rooms.len() > 2 {
+                self.map.set(exit, Tile::Exit);
+            }
         }
         for room in &rooms[1..] {
             for _ in 0..self.rng.range(0, 1 + self.depth / 3) {
@@ -481,9 +506,21 @@ impl Game {
                     self.enter_next_floor();
                     self.events.push(Event::Descended);
                     self.say(format!("You descend to floor {}.", self.depth), Tone::Normal);
+                    if Self::has_exit(self.depth) {
+                        self.say("Daylight seeps in somewhere on this floor: a way out.", Tone::Good);
+                    }
                     return;
                 }
                 self.say("There are no stairs here.", Tone::Normal);
+                false
+            }
+            Action::Escape => {
+                if self.map.tile(self.player) == Tile::Exit {
+                    self.state = State::Escaped;
+                    self.say(format!("You climb out of the dungeon with {} gold.", self.gold), Tone::Good);
+                } else {
+                    self.say("There is no way out here.", Tone::Normal);
+                }
                 false
             }
             Action::Drink => {
@@ -523,8 +560,10 @@ impl Game {
     fn move_hero(&mut self, to: Pos) {
         self.player = to;
         self.pick_up();
-        if self.map.tile(to) == Tile::StairsDown {
-            self.say("Stairs lead down here (press >).", Tone::Normal);
+        match self.map.tile(to) {
+            Tile::StairsDown => self.say("Stairs lead down here (press >).", Tone::Normal),
+            Tile::Exit => self.say("A way out! Press < to leave with your gold, or go on deeper.", Tone::Good),
+            _ => {}
         }
     }
 
@@ -988,6 +1027,25 @@ mod tests {
         g.player = Pos::new(amulet.x - 1, amulet.y);
         g.act(Action::Move(1, 0));
         assert_eq!(g.state, State::Won);
+    }
+
+    #[test]
+    fn ways_out_wait_on_some_floors() {
+        let mut g = Game::new(23);
+        while g.depth < EXIT_EVERY {
+            g.player = g.map.rooms.last().unwrap().center();
+            g.act(Action::Descend);
+        }
+        let exit = g.map.rooms[g.map.rooms.len() / 2].center();
+        assert_eq!(g.map.tile(exit), Tile::Exit);
+        g.monsters.clear();
+        g.act(Action::Escape);
+        assert_eq!(g.state, State::Playing, "no way out where the hero stands");
+        g.player = exit;
+        g.act(Action::Escape);
+        assert_eq!(g.state, State::Escaped);
+        assert!(g.gold_is_safe());
+        assert!(!Game::has_exit(1) && !Game::has_exit(LAST_DEPTH));
     }
 
     #[test]

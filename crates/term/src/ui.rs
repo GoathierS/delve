@@ -42,6 +42,7 @@ pub fn draw(f: &mut Frame, game: &Game, aim: Option<Ability>) {
     match game.state {
         State::Playing => {}
         State::Dead => draw_end(f, game, "You died", Color::Red),
+        State::Escaped => draw_end(f, game, "Escaped!", Color::Green),
         State::Won => draw_end(f, game, "Victory!", GOLD),
     }
 }
@@ -100,6 +101,8 @@ fn glyph_at(game: &Game, p: Pos) -> Option<(char, Color)> {
         (Tile::Floor, false) => ('·', FLOOR_SEEN),
         (Tile::StairsDown, true) => ('>', Color::White),
         (Tile::StairsDown, false) => ('>', FLOOR),
+        (Tile::Exit, true) => ('<', Color::Green),
+        (Tile::Exit, false) => ('<', FLOOR),
     })
 }
 
@@ -193,6 +196,7 @@ fn draw_side(f: &mut Frame, area: Rect, game: &Game) {
         ("bump", "attack"),
         (". space", "wait"),
         (">", "go down"),
+        ("<", "leave (floors 3 6 9)"),
         ("p", "drink potion"),
         ("d f t +dir", "abilities"),
         ("red ground", "blows to come"),
@@ -237,6 +241,7 @@ fn draw_end(f: &mut Frame, game: &Game, title: &str, color: Color) {
     let popup = Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h);
     let cause = match (game.state, game.killed_by.as_deref()) {
         (State::Won, _) => format!("You escaped with the Amulet from floor {}.", game.depth),
+        (State::Escaped, _) => format!("You climbed out from floor {}.", game.depth),
         (_, Some(name)) => format!("Killed by a {name} on floor {}.", game.depth),
         _ => format!("Died on floor {}.", game.depth),
     };
@@ -244,7 +249,12 @@ fn draw_end(f: &mut Frame, game: &Game, title: &str, color: Color) {
     let text = vec![
         Line::raw(""),
         Line::raw(cause),
-        Line::raw(format!("Level {} · {} kills · {} gold to your purse", game.level, game.kills, game.gold)),
+        Line::raw(format!("Level {} · {} kills", game.level, game.kills)),
+        if game.gold_is_safe() {
+            Line::styled(format!("+{} gold to your purse", game.gold), Style::new().fg(GOLD))
+        } else {
+            Line::styled(format!("{} gold lost in the dark", game.gold), Style::new().fg(Color::Red))
+        },
         Line::styled(format!("Score {score}"), Style::new().add_modifier(Modifier::BOLD)),
         Line::raw(""),
         Line::styled("r: new dungeon   q: quit", Style::new().fg(Color::Cyan)),

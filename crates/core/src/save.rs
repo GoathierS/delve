@@ -1,8 +1,8 @@
 //! Saves, the roguelike way: one save, written when leaving and deleted when loaded, so
 //! death stays final. Also the high scores.
 //!
-//! The gold of every finished run goes into a purse kept with the bought equipment, in
-//! the [`Profile`].
+//! The gold of a run that ends alive, by a way out or with the Amulet, goes into a purse
+//! kept with the bought equipment, in the [`Profile`]; death loses it.
 //!
 //! Files live in `$XDG_DATA_HOME/delve` (usually `~/.local/share/delve`) on Linux,
 //! `%APPDATA%\delve` on Windows and `~/Library/Application Support/delve` on macOS.
@@ -39,7 +39,10 @@ pub struct Score {
     pub depth: i32,
     pub level: i32,
     pub won: bool,
-    /// What ended the run: the monster's name, or `None` for a victory.
+    /// Left by a way out.
+    #[serde(default)]
+    pub escaped: bool,
+    /// What ended the run: the monster's name, or `None` for a victory or an escape.
     pub killed_by: Option<String>,
     pub seed: u64,
 }
@@ -144,22 +147,25 @@ impl Storage {
         Ok(Some(game))
     }
 
-    /// Ends a run that is over: removes its save, puts its gold in the purse and enters it
-    /// in the high scores. Returns the table and the rank of this run in it, if it made it.
+    /// Ends a run that is over: removes its save, puts its gold in the purse if the hero
+    /// came out alive and enters it in the high scores. Returns the table and the rank of this run in it, if it made it.
     pub fn finish(&self, game: &Game) -> io::Result<(Vec<Score>, Option<usize>)> {
         debug_assert!(game.state != State::Playing);
         match fs::remove_file(self.save_path()) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
             _ => {}
         }
-        let mut profile = self.profile();
-        profile.purse += game.gold;
-        self.save_profile(&profile)?;
+        if game.gold_is_safe() {
+            let mut profile = self.profile();
+            profile.purse += game.gold;
+            self.save_profile(&profile)?;
+        }
         let entry = Score {
             score: game.score(),
             depth: game.depth,
             level: game.level,
             won: game.state == State::Won,
+            escaped: game.state == State::Escaped,
             killed_by: game.killed_by.clone(),
             seed: game.seed,
         };
@@ -262,7 +268,13 @@ mod tests {
         assert_eq!(scores.len(), 2);
         assert!(scores[0].score > scores[1].score);
         assert_eq!(s.scores(), scores);
-        assert_eq!(s.profile().purse, 500, "the gold of a finished run goes to the purse");
+        assert_eq!(s.profile().purse, 0, "the gold of a dead hero is lost");
+
+        game.state = State::Escaped;
+        game.killed_by = None;
+        let (scores, _) = s.finish(&game).unwrap();
+        assert!(scores.iter().any(|s| s.escaped));
+        assert_eq!(s.profile().purse, 500, "the gold of an escape goes to the purse");
     }
 
     #[test]

@@ -250,13 +250,17 @@ impl Run {
         for &c in typed {
             action = match c {
                 '>' => Some(Action::Descend),
+                '<' => Some(Action::Escape),
                 '.' | ' ' | '5' => Some(Action::Wait),
                 'p' | 'P' => Some(Action::Drink),
                 _ => action,
             };
         }
+        // Enter takes whatever way lies underfoot.
+        let here = self.game.map.tile(self.game.player);
+        let way = if here == delve_core::map::Tile::Exit { Action::Escape } else { Action::Descend };
         if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) {
-            action = Some(Action::Descend);
+            action = Some(way);
         }
         if action.is_some() {
             self.travel.clear();
@@ -268,8 +272,8 @@ impl Run {
             if cell.distance(me) == 1 {
                 action = Some(Action::Move(cell.x - me.x, cell.y - me.y));
                 self.travel.clear();
-            } else if cell == me && self.game.map.tile(me) == delve_core::map::Tile::StairsDown {
-                action = Some(Action::Descend);
+            } else if cell == me && here != delve_core::map::Tile::Floor {
+                action = Some(way);
             } else if let Some(path) = self.game.path_to(cell) {
                 self.travel = path.into_iter().rev().collect();
                 self.travel_timer = 0.0;
@@ -484,7 +488,7 @@ async fn main() {
 
     // `DELVE_SCREENSHOT=out.png delve` renders a few frames of a fixed scene, saves one
     // and quits, away from the real save; used for the README. `DELVE_SCENE` picks the
-    // scene: `fight` (the default), `aim`, `death`, `menu` or `armory`.
+    // scene: `fight` (the default), `aim`, `exit`, `death`, `menu` or `armory`.
     let screenshot = std::env::var_os("DELVE_SCREENSHOT");
     if let Some(path) = screenshot {
         let dir = std::env::temp_dir().join("delve-screenshot");
@@ -538,6 +542,20 @@ fn stage(delve: &mut Delve, scene: &str) {
         }
         _ => {
             let mut run = Run::new(Game::equipped(7, &delve.profile.loadout()));
+            if scene == "exit" {
+                // Down to the first way out, the hero standing next to it.
+                while !Game::has_exit(run.game.depth) {
+                    run.game.player = run.game.map.rooms.last().unwrap().center();
+                    run.act(Action::Descend, &delve.storage);
+                }
+                let exit = run.game.map.rooms[run.game.map.rooms.len() / 2].center();
+                run.game.monsters.clear();
+                run.game.player = Pos::new(exit.x - 1, exit.y);
+                run.game.refresh_sight();
+                run.camera = tile_center(run.game.player);
+                delve.run = Some(run);
+                return;
+            }
             stage_fight(&mut run, &delve.storage);
             if scene == "death" {
                 let me = run.game.player;

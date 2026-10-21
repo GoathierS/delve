@@ -14,6 +14,8 @@ pub enum Tile {
     Wall,
     Floor,
     StairsDown,
+    /// A way out of the dungeon, on some floors: the run ends there, gold safe.
+    Exit,
 }
 
 impl Tile {

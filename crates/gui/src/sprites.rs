@@ -15,6 +15,7 @@ const FLOOR: u32 = 48;
 const FLOOR_SPECKLED: u32 = 49;
 const FLOOR_TILED: u32 = 42;
 const STAIRS: u32 = 39;
+const EXIT: u32 = 45;
 pub const POTION: u32 = 115;
 pub const GOLD: u32 = 89;
 const AMULET: u32 = 44;
@@ -81,6 +82,7 @@ pub fn tile(tile: Tile, p: Pos) -> u32 {
     match tile {
         Tile::Wall => WALL,
         Tile::StairsDown => STAIRS,
+        Tile::Exit => EXIT,
         Tile::Floor => {
             let h = (p.x as u32).wrapping_mul(73_856_093) ^ (p.y as u32).wrapping_mul(19_349_663);
             match h % 23 {
