@@ -117,6 +117,7 @@ fn monster_color(glyph: char) -> Color {
         'W' => Color::Rgb(200, 200, 255),
         'D' => Color::Rgb(255, 60, 40),
         'S' => Color::Rgb(150, 110, 200),
+        'b' => Color::Rgb(200, 140, 90),
         _ => Color::White,
     }
 }

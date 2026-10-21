@@ -38,6 +38,7 @@ pub fn monster(kind: &Kind) -> u32 {
         "wraith" => 121,
         "demon" => 110,
         "shade" => 111,
+        "bat" => 120,
         _ => 111,
     }
 }

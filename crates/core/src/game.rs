@@ -22,14 +22,16 @@ const LOG_LEN: usize = 100;
 pub const START_STATS: Stats = Stats { hp: 30, max_hp: 30, attack: 5, defense: 1 };
 pub const START_POTIONS: i32 = 1;
 /// Turns a full torch lasts.
-pub const TORCH_MAX: i32 = 250;
+pub const TORCH_MAX: i32 = 400;
 /// Turns of light in a flask of oil.
-pub const OIL: i32 = 100;
+pub const OIL: i32 = 150;
 /// Torch burnt by throwing fire.
 pub const THROW_COST: i32 = 40;
 const THROW_RANGE: i32 = 5;
-/// Once the torch is out, a shade rises every this many turns.
-const SHADE_EVERY: u32 = 7;
+/// Once the torch is out, a shade rises every this many turns at first...
+const SHADE_EVERY: u32 = 12;
+/// ...then sooner and sooner, down to this, the longer the dark lasts.
+const SHADE_EVERY_MIN: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
@@ -89,13 +91,66 @@ pub struct Kind {
     /// Shallowest floor it appears on.
     pub min_depth: i32,
     pub pattern: Pattern,
+    /// Takes two steps a turn when closing in; still strikes once.
+    pub fast: bool,
 }
 
 pub const BESTIARY: &[Kind] = &[
-    Kind { name: "rat", glyph: 'r', hp: 5, attack: 2, defense: 0, xp: 1, min_depth: 1, pattern: Pattern::Bite },
-    Kind { name: "kobold", glyph: 'k', hp: 8, attack: 3, defense: 0, xp: 2, min_depth: 1, pattern: Pattern::Bite },
-    Kind { name: "goblin", glyph: 'g', hp: 10, attack: 4, defense: 1, xp: 3, min_depth: 2, pattern: Pattern::Lunge },
-    Kind { name: "orc", glyph: 'o', hp: 16, attack: 5, defense: 2, xp: 5, min_depth: 3, pattern: Pattern::Cleave },
+    Kind {
+        name: "rat",
+        glyph: 'r',
+        hp: 5,
+        attack: 2,
+        defense: 0,
+        xp: 1,
+        min_depth: 1,
+        pattern: Pattern::Bite,
+        fast: false,
+    },
+    Kind {
+        name: "kobold",
+        glyph: 'k',
+        hp: 8,
+        attack: 3,
+        defense: 0,
+        xp: 2,
+        min_depth: 1,
+        pattern: Pattern::Bite,
+        fast: false,
+    },
+    Kind {
+        name: "bat",
+        glyph: 'b',
+        hp: 6,
+        attack: 3,
+        defense: 0,
+        xp: 2,
+        min_depth: 2,
+        pattern: Pattern::Bite,
+        fast: true,
+    },
+    Kind {
+        name: "goblin",
+        glyph: 'g',
+        hp: 10,
+        attack: 4,
+        defense: 1,
+        xp: 3,
+        min_depth: 2,
+        pattern: Pattern::Lunge,
+        fast: false,
+    },
+    Kind {
+        name: "orc",
+        glyph: 'o',
+        hp: 16,
+        attack: 5,
+        defense: 2,
+        xp: 5,
+        min_depth: 3,
+        pattern: Pattern::Cleave,
+        fast: false,
+    },
     Kind {
         name: "giant spider",
         glyph: 's',
@@ -105,20 +160,53 @@ pub const BESTIARY: &[Kind] = &[
         xp: 6,
         min_depth: 4,
         pattern: Pattern::Lunge,
+        fast: false,
     },
-    Kind { name: "troll", glyph: 'T', hp: 28, attack: 7, defense: 3, xp: 10, min_depth: 5, pattern: Pattern::Smash },
-    Kind { name: "wraith", glyph: 'W', hp: 22, attack: 9, defense: 2, xp: 12, min_depth: 7, pattern: Pattern::Bolt },
-    Kind { name: "demon", glyph: 'D', hp: 60, attack: 12, defense: 5, xp: 40, min_depth: 9, pattern: Pattern::Blast },
-    // Born of the dark when the torch dies; never placed with a floor.
+    Kind {
+        name: "troll",
+        glyph: 'T',
+        hp: 28,
+        attack: 7,
+        defense: 3,
+        xp: 10,
+        min_depth: 5,
+        pattern: Pattern::Smash,
+        fast: false,
+    },
+    Kind {
+        name: "wraith",
+        glyph: 'W',
+        hp: 22,
+        attack: 9,
+        defense: 2,
+        xp: 12,
+        min_depth: 7,
+        pattern: Pattern::Bolt,
+        fast: false,
+    },
+    Kind {
+        name: "demon",
+        glyph: 'D',
+        hp: 60,
+        attack: 12,
+        defense: 5,
+        xp: 40,
+        min_depth: 9,
+        pattern: Pattern::Blast,
+        fast: false,
+    },
+    // Born of the dark when the torch dies; never placed with a floor. No experience in
+    // them: the dark is to be fled, not farmed.
     Kind {
         name: "shade",
         glyph: 'S',
         hp: 12,
         attack: 6,
         defense: 0,
-        xp: 2,
+        xp: 0,
         min_depth: i32::MAX,
         pattern: Pattern::Bite,
+        fast: false,
     },
 ];
 
@@ -318,9 +406,12 @@ pub struct Game {
     /// Turns of light left.
     #[serde(default = "full_torch")]
     pub torch: i32,
-    /// Turns spent without light, which call the shades.
+    /// Turns spent without light, which call the shades faster and faster.
     #[serde(default)]
     dark_turns: u32,
+    /// Turns since the last shade rose.
+    #[serde(default)]
+    shade_timer: u32,
     /// Turns before each ability, in [`Ability::ALL`] order, can be used again.
     #[serde(default)]
     pub cooldowns: [u32; 3],
@@ -358,6 +449,7 @@ impl Game {
             gear: gear.iter().map(|g| g.name.to_string()).collect(),
             torch: TORCH_MAX,
             dark_turns: 0,
+            shade_timer: 0,
             cooldowns: [0; 3],
             next_id: 0,
             events: vec![],
@@ -432,7 +524,7 @@ impl Game {
             }
         }
         for room in &rooms[1..] {
-            for _ in 0..self.rng.range(0, 1 + self.depth / 3) {
+            for _ in 0..self.rng.range(0, 1 + self.depth / 2) {
                 let pos = room.random_cell(&mut self.rng);
                 if self.free(pos) {
                     let kind = self.random_kind();
@@ -728,6 +820,7 @@ impl Game {
                 }
                 self.torch = (self.torch + OIL).min(TORCH_MAX);
                 self.dark_turns = 0;
+                self.shade_timer = 0;
             }
             ItemKind::Amulet => {
                 self.say("You seize the Amulet! You have won.", Tone::Good);
@@ -796,7 +889,10 @@ impl Game {
         }
         if self.torch == 0 {
             self.dark_turns += 1;
-            if self.dark_turns.is_multiple_of(SHADE_EVERY) {
+            self.shade_timer += 1;
+            let every = SHADE_EVERY.saturating_sub(self.dark_turns / 20).max(SHADE_EVERY_MIN);
+            if self.shade_timer >= every {
+                self.shade_timer = 0;
                 self.raise_shade(&to_hero);
             }
         }
@@ -912,6 +1008,9 @@ impl Game {
         // Then it marks its next blow, stepping closer first if the hero is out of reach.
         if self.reach(i).is_none() {
             self.step_toward_hero(i, to_hero);
+            if self.monsters[i].kind.fast && self.reach(i).is_none() {
+                self.step_toward_hero(i, to_hero);
+            }
         }
         if let Some(cells) = self.reach(i) {
             let m = &mut self.monsters[i];
@@ -1182,6 +1281,17 @@ mod tests {
         }
         assert_eq!(g.light_radius(), 1);
         assert!(g.monsters.iter().any(|m| m.kind.name == "shade"));
+    }
+
+    #[test]
+    fn bats_close_in_two_cells_a_turn() {
+        let mut g = empty(24);
+        let room = g.map.rooms[0];
+        g.player = Pos::new(room.x, room.y);
+        let start = Pos::new(room.x + 4, room.y);
+        g.spawn(kind("bat"), start, true);
+        g.act(Action::Wait);
+        assert_eq!(g.monsters[0].pos.distance(start), 2);
     }
 
     #[test]
