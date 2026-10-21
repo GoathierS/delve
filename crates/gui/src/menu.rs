@@ -15,6 +15,8 @@ pub enum Page {
     Title,
     Armory,
     Scores,
+    /// The title alone, for the cover picture of the game's page.
+    Cover,
 }
 
 /// What the player asked for on a menu.
@@ -116,6 +118,10 @@ impl Menu {
             Page::Title => self.title(sheet, profile, has_save, &nav, moved),
             Page::Armory => self.armory(sheet, profile, &nav, moved),
             Page::Scores => self.scores(scores, &nav),
+            Page::Cover => {
+                self.cover(sheet);
+                None
+            }
         };
         self.draw_notice();
         set_default_camera();
@@ -226,6 +232,26 @@ impl Menu {
             Entry::Scores => Command::Go(Page::Scores),
             Entry::Quit => Command::Quit,
         })
+    }
+
+    fn cover(&self, sheet: &Texture2D) {
+        let size = ui::size();
+        let (cx, cy) = (size.x / 2.0, size.y * 0.5);
+        draw_rectangle(0.0, 0.0, size.x, size.y, Color::new(0.02, 0.01, 0.03, 0.55));
+        // The warm light of a torch behind the title, in many faint layers so that it
+        // fades without rings.
+        for i in 0..60 {
+            let r = size.y * (0.62 - i as f32 * 0.009);
+            draw_circle(cx, cy - 20.0, r, Color::new(1.0, 0.55, 0.15, 0.012));
+        }
+        let size_t = 170.0;
+        let tw = ui::measure("DELVE", size_t, Face::Title);
+        ui::shadowed("DELVE", cx - tw / 2.0, cy + 20.0, size_t, Face::Title, GOLDEN);
+        let tagline = "A roguelike about light, gold, and knowing when to leave.";
+        ui::shadowed(tagline, cx - ui::measure(tagline, 30.0, Face::Bold) / 2.0, cy + 110.0, 30.0, Face::Bold, TEXT);
+        sprite(sheet, sprites::HERO, vec2(cx - tw / 2.0 - 200.0, cy - 150.0), 176.0, WHITE);
+        let demon = delve_core::game::BESTIARY.iter().find(|k| k.name == "demon").expect("a demon");
+        sprite(sheet, sprites::monster(demon), vec2(cx + tw / 2.0 + 24.0, cy - 150.0), 176.0, WHITE);
     }
 
     fn armory(&mut self, sheet: &Texture2D, profile: &Profile, nav: &Nav, moved: bool) -> Option<Command> {

@@ -31,10 +31,16 @@ const REPEAT_EVERY: f64 = 0.075;
 const TRAVEL_STEP: f32 = 0.07;
 
 fn window_conf() -> Conf {
+    // `DELVE_WINDOW=1260x1000` picks another window size, for pictures of the game.
+    let size = std::env::var("DELVE_WINDOW").ok().and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse().ok()?, h.parse().ok()?))
+    });
+    let (width, height) = size.unwrap_or((1440, 900));
     Conf {
         window_title: "delve".into(),
-        window_width: 1440,
-        window_height: 900,
+        window_width: width,
+        window_height: height,
         window_resizable: true,
         high_dpi: true,
         icon: Some(icon()),
@@ -492,7 +498,8 @@ async fn main() {
 
     // `DELVE_SCREENSHOT=out.png delve` renders a few frames of a fixed scene, saves one
     // and quits, away from the real save; used for the README. `DELVE_SCENE` picks the
-    // scene: `fight` (the default), `aim`, `exit`, `death`, `menu` or `armory`.
+    // scene: `fight` (the default), `aim`, `exit`, `escaped`, `dark`, `death`, `menu`,
+    // `armory` or `cover`.
     let screenshot = std::env::var_os("DELVE_SCREENSHOT");
     if let Some(path) = screenshot {
         let dir = std::env::temp_dir().join("delve-screenshot");
@@ -546,9 +553,12 @@ fn stage(delve: &mut Delve, scene: &str) {
         "armory" => {
             delve.menu.page = Page::Armory;
         }
+        "cover" => {
+            delve.menu.page = Page::Cover;
+        }
         _ => {
             let mut run = Run::new(Game::equipped(7, &delve.profile.loadout()));
-            if scene == "exit" {
+            if scene == "exit" || scene == "escaped" {
                 // Down to the first way out, the hero standing next to it.
                 while !Game::has_exit(run.game.depth) {
                     run.game.player = run.game.map.rooms.last().unwrap().center();
@@ -557,8 +567,32 @@ fn stage(delve: &mut Delve, scene: &str) {
                 let exit = run.game.map.rooms[run.game.map.rooms.len() / 2].center();
                 run.game.monsters.clear();
                 run.game.player = Pos::new(exit.x - 1, exit.y);
+                run.game.torch = 151;
                 run.game.refresh_sight();
                 run.camera = tile_center(run.game.player);
+                if scene == "escaped" {
+                    run.game.gold = 230;
+                    run.game.kills = 14;
+                    run.act(Action::Move(1, 0), &delve.storage);
+                    run.act(Action::Escape, &delve.storage);
+                }
+                delve.run = Some(run);
+                return;
+            }
+            if scene == "dark" {
+                // The torch has died: shades close in from the dark.
+                run.game.monsters.clear();
+                run.game.torch = 0;
+                run.game.refresh_sight();
+                run.game.say("Your torch goes out. Something stirs in the dark...", Tone::Bad);
+                let me = run.game.player;
+                for (dx, dy) in [(1, 0), (-1, 1)] {
+                    let pos = Pos::new(me.x + dx, me.y + dy);
+                    if run.game.map.tile(pos).walkable() {
+                        add_monster(&mut run, "shade", pos, 12);
+                    }
+                }
+                run.act(Action::Wait, &delve.storage);
                 delve.run = Some(run);
                 return;
             }
@@ -567,6 +601,7 @@ fn stage(delve: &mut Delve, scene: &str) {
                 let me = run.game.player;
                 let free = delve_core::map::Map::neighbors(me)
                     .find(|&p| run.game.map.tile(p).walkable() && run.game.monster_at(p).is_none());
+                run.game.gold = 180;
                 if let Some(pos) = free {
                     add_monster(&mut run, "troll", pos, 99);
                     run.game.monsters.last_mut().unwrap().stats.attack = 99;

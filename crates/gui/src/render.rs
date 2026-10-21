@@ -302,7 +302,7 @@ fn draw_hud(game: &Game, sheet: &Texture2D) {
         let color = if low { Color::new(0.75, 0.25, 0.1, 1.0) } else { Color::new(0.9, 0.5, 0.12, 1.0) };
         (format!("Torch {}/{}", game.torch, TORCH_MAX), color)
     } else {
-        ("Torch out · the dark hunts you".to_string(), BAD)
+        ("Torch out! Find oil".to_string(), BAD)
     };
     bar(x + 16.0, y + 122.0, w - 32.0, torch, color, &caption);
 
