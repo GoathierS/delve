@@ -45,7 +45,9 @@ jobs:
       - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.name }}
-          path: delve-*.*
+          path: |
+            delve-*.zip
+            delve-*.tar.gz
 
   release:
     needs: build
@@ -57,4 +59,4 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" delve-* --repo "$GITHUB_REPOSITORY" --title "delve $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" delve-*.zip delve-*.tar.gz --repo "$GITHUB_REPOSITORY" --title "delve $GITHUB_REF_NAME" --generate-notes
