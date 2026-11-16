@@ -87,6 +87,9 @@ pub struct Profile {
     /// Frames wait for the display's refresh, which avoids tearing.
     #[serde(default = "yes")]
     pub vsync: bool,
+    /// Loudness of the sounds, from 0 (silent) to 1.
+    #[serde(default = "default_volume")]
+    pub volume: f32,
 }
 
 fn one() -> f32 {
@@ -95,6 +98,10 @@ fn one() -> f32 {
 
 fn yes() -> bool {
     true
+}
+
+fn default_volume() -> f32 {
+    0.7
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +124,15 @@ impl std::fmt::Display for BuyError {
 
 impl Default for Profile {
     fn default() -> Self {
-        Profile { purse: 0, owned: vec![], ui_scale: 1.0, show_fps: false, screen_shake: true, vsync: true }
+        Profile {
+            purse: 0,
+            owned: vec![],
+            ui_scale: 1.0,
+            show_fps: false,
+            screen_shake: true,
+            vsync: true,
+            volume: default_volume(),
+        }
     }
 }
 

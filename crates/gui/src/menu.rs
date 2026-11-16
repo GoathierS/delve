@@ -28,6 +28,8 @@ pub enum Setting {
     Fps,
     Shake,
     VSync,
+    /// Sound loudness, by this much.
+    Volume(f32),
 }
 
 /// What the player asked for on a menu.
@@ -86,6 +88,12 @@ impl Nav {
             back: any(&[KeyCode::Escape, KeyCode::Backspace]),
         }
     }
+}
+
+/// Whether an arrow key was pressed this frame, moving through a menu.
+pub fn arrows() -> bool {
+    let nav = Nav::read();
+    nav.up || nav.down || nav.left || nav.right
 }
 
 pub struct Menu {
@@ -379,6 +387,7 @@ impl Menu {
     fn options(&mut self, profile: &Profile, nav: &Nav, moved: bool) -> Option<Command> {
         let on = |b: bool| if b { "On" } else { "Off" }.to_string();
         let rows = [
+            ("Volume", format!("{:.0}%", profile.volume * 100.0), "← →"),
             ("Interface size", format!("{:.0}%", ui::user_scale() * 100.0), "← → or + −"),
             ("Show FPS", on(profile.show_fps), "F3 anywhere"),
             ("Screen shake", on(profile.screen_shake), "when the hero is hit"),
@@ -422,10 +431,11 @@ impl Menu {
         }
         let chosen = clicked.or((nav.ok || nav.left || nav.right).then_some(self.option))?;
         Some(match chosen {
-            0 => Command::Set(Setting::Scale(if nav.left { -0.1 } else { 0.1 })),
-            1 => Command::Set(Setting::Fps),
-            2 => Command::Set(Setting::Shake),
-            3 => Command::Set(Setting::VSync),
+            0 => Command::Set(Setting::Volume(if nav.left { -0.1 } else { 0.1 })),
+            1 => Command::Set(Setting::Scale(if nav.left { -0.1 } else { 0.1 })),
+            2 => Command::Set(Setting::Fps),
+            3 => Command::Set(Setting::Shake),
+            4 => Command::Set(Setting::VSync),
             _ => Command::Go(Page::Title),
         })
     }

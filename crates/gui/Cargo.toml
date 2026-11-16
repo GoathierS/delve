@@ -16,4 +16,4 @@ eula = false
 
 [dependencies]
 delve-core = { path = "../core" }
-macroquad = { version = "0.4", default-features = false }
+macroquad = { version = "0.4", default-features = false, features = ["audio"] }

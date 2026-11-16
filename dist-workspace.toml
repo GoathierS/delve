@@ -23,3 +23,7 @@ allow-dirty = ["msi"]
 pr-run-mode = "upload"
 # Also send each release to itch.io, once the page is set up (see publish-itch.yml)
 publish-jobs = ["./publish-itch"]
+
+# Sound on Linux goes through ALSA
+[dist.dependencies.apt]
+libasound2-dev = "*"

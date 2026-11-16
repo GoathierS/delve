@@ -67,7 +67,8 @@ adds itself to your applications menu the first time it runs.
 
 ## Build from source
 
-You need [Rust](https://rustup.rs). On Linux:
+You need [Rust](https://rustup.rs), and on Linux the ALSA headers for sound
+(`sudo apt install libasound2-dev` on Debian and Ubuntu). Then:
 
 ```sh
 git clone https://github.com/GoathierS/delve
@@ -114,6 +115,7 @@ Saves live in `~/.local/share/delve` on Linux, `%APPDATA%\delve` on Windows and
 ## Credits
 
 - Tiles: [Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon) by Kenney (CC0).
+- Sounds: made by the game itself at start-up, no recordings.
 - Fonts: [DejaVu](https://dejavu-fonts.github.io/) (Bitstream Vera license).
 
 ## License

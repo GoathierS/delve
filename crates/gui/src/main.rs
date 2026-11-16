@@ -7,6 +7,7 @@ mod desktop;
 mod fx;
 mod menu;
 mod render;
+mod sfx;
 mod sprites;
 mod ui;
 
@@ -176,8 +177,10 @@ impl Run {
 
     fn act(&mut self, action: Action, storage: &Storage) {
         let depth = self.game.depth;
+        let before = sfx::Before::of(&self.game);
         self.game.act(action);
         self.fx.on_events(&self.game);
+        sfx::on_action(&self.game, action, &before);
         if self.game.depth != depth {
             self.travel.clear();
             self.camera = tile_center(self.game.player);
@@ -425,6 +428,7 @@ impl Delve {
         let profile = storage.profile();
         ui::set_user_scale(profile.ui_scale);
         ui::set_shake(profile.screen_shake);
+        sfx::set_volume(profile.volume);
         let (scores, has_save) = (storage.scores(), storage.has_save());
         Delve { storage, profile, sheet, menu: Menu::new(), run: None, scores, has_save }
     }
@@ -448,6 +452,20 @@ impl Delve {
                 ui::set_shake(self.profile.screen_shake);
             }
             Setting::VSync => self.profile.vsync = !self.profile.vsync,
+            Setting::Volume(step) => {
+                // Past either end, wraps around, so Enter alone can reach every level.
+                let v = sfx::volume() + step;
+                let v = if v > 1.05 {
+                    0.0
+                } else if v < -0.05 {
+                    1.0
+                } else {
+                    v
+                };
+                sfx::set_volume((v * 10.0).round() / 10.0);
+                self.profile.volume = sfx::volume();
+                sfx::play(sfx::Sfx::Coin);
+            }
         }
         if let Err(e) = self.storage.save_profile(&self.profile) {
             eprintln!("delve: could not save the settings: {e}");
@@ -515,7 +533,15 @@ impl Delve {
             return true;
         }
 
-        match self.menu.frame(&self.sheet, &self.profile, &self.scores, self.has_save) {
+        let command = self.menu.frame(&self.sheet, &self.profile, &self.scores, self.has_save);
+        match command {
+            // The volume plays its own sound, at the new level.
+            Some(Command::Set(Setting::Volume(_)) | Command::Buy(_)) => {}
+            Some(_) => sfx::play(sfx::Sfx::Select),
+            None if menu::arrows() => sfx::play(sfx::Sfx::Tick),
+            None => {}
+        }
+        match command {
             None => {}
             Some(Command::Continue) => {
                 self.resume();
@@ -527,13 +553,17 @@ impl Delve {
             Some(Command::Go(page)) => self.menu.page = page,
             Some(Command::Buy(gear)) => match self.profile.buy(gear) {
                 Ok(()) => {
+                    sfx::play(sfx::Sfx::Coin);
                     if let Err(e) = self.storage.save_profile(&self.profile) {
                         self.menu.notify(format!("Could not save: {e}"), ui::BAD);
                     } else {
                         self.menu.notify(format!("You bought the {}.", gear.name), ui::GOOD);
                     }
                 }
-                Err(e) => self.menu.notify(format!("{}: {e}.", gear.name), ui::BAD),
+                Err(e) => {
+                    sfx::play(sfx::Sfx::Denied);
+                    self.menu.notify(format!("{}: {e}.", gear.name), ui::BAD);
+                }
             },
         }
         true
@@ -612,8 +642,21 @@ async fn main() {
         }
     }
 
+    // `DELVE_SOUNDS=dir delve` writes every sound to a WAV file there, to listen to them.
+    if let Some(dir) = std::env::var_os("DELVE_SOUNDS") {
+        let dir = std::path::PathBuf::from(dir);
+        for sound in sfx::Sfx::ALL {
+            let path = dir.join(format!("{}.wav", sound.name()));
+            if let Err(e) = std::fs::write(&path, sfx::wav(&sound.samples(0))) {
+                eprintln!("delve: {}: {e}", path.display());
+            }
+        }
+        return;
+    }
+
     #[cfg(target_os = "linux")]
     desktop::register();
+    sfx::load().await;
     let mut delve = Delve::new(Storage::default_location(), sheet);
     // Smoothed frame time and time spent by the game, for the frame rate counter.
     let (mut frame_ms, mut work_ms) = (16.7f32, 0.0f32);
