@@ -337,7 +337,7 @@ checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 
 [[package]]
 name = "delve"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "delve-core",
  "macroquad",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "delve-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ron",
  "serde",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "delve-term"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "delve-core",
  "ratatui",
